@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use crate::{BaseStrategyRecord, MovementStrategyPlan, ObservationModifierRecord};
+use std::collections::BTreeMap;
 
 pub fn build_strategy(
     base: BaseStrategyRecord,
@@ -69,9 +69,11 @@ fn normalize_to_100(input: BTreeMap<String, i32>) -> BTreeMap<String, u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use super::*;
-    use crate::{BaseStrategyRecord, MovementExperience, MovementSystem, ObservationModifierRecord};
+    use crate::{
+        BaseStrategyRecord, MovementExperience, MovementSystem, ObservationModifierRecord,
+    };
+    use std::collections::BTreeMap;
 
     #[test]
     fn applies_modifiers_and_normalizes_to_100() {
@@ -104,7 +106,9 @@ mod tests {
         let strategy = build_strategy(base, vec![modifier]);
         let total: u32 = strategy.emphasis.values().sum();
         assert_eq!(total, 100);
-        assert!(strategy.key_objectives.contains(&"Restore thoracic extension".to_string()));
+        assert!(strategy
+            .key_objectives
+            .contains(&"Restore thoracic extension".to_string()));
     }
 
     #[test]
