@@ -80,7 +80,8 @@
             border-radius: 20px; padding: 0.4rem 0.8rem; cursor: pointer;
             font-size: 0.85rem; transition: all 0.2s; user-select: none;
         }
-        .chip.active { border-color: var(--accent); background: rgba(124,92,255,0.15); }
+        .chip.active { border-color: var(--accent); background: rgba(124,92,255,0.25); color: #fff; box-shadow: 0 0 8px rgba(124,92,255,0.3); }
+        .chip.active::before { content: "✓ "; color: var(--success); font-weight: 700; }
         .chip input { display: none; }
         .btn {
             background: linear-gradient(135deg, var(--accent), var(--accent-light));
