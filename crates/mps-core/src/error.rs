@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum MpsError {
     #[error("Unsupported movement experience: {0}")]
     UnsupportedMovementExperience(String),
