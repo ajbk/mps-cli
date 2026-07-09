@@ -373,5 +373,6 @@ mod tests {
         assert_eq!(plan.journey.len(), 7);
         assert_eq!(plan.duration_minutes, 60);
         assert_eq!(plan.movement_strategy.emphasis.values().sum::<u32>(), 100);
+        assert!(plan.journey.iter().any(|p| p.phase == MovementJourneyPhase::Build));
     }
 }
