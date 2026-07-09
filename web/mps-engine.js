@@ -1,138 +1,64 @@
-// MPS Engine — Client-side deterministic class plan generator
-// Ported from Rust mps-core
-
-// ── Domain Types ──────────────────────────────────────────────
-
 const LEVEL_NUMERIC = {
-    'Beginner': 1,
-    'BeginnerIntermediate': 2,
-    'Intermediate': 3,
-    'IntermediateAdvanced': 4,
-    'Advanced': 5
+    Beginner: 1,
+    BeginnerIntermediate: 2,
+    Intermediate: 3,
+    IntermediateAdvanced: 4,
+    Advanced: 5
 };
 
-const EQUIPMENT_DB_TO_JS = {
-    'reformer': 'Reformer',
-    'chair': 'Chair',
-    'mat': 'Mat',
-    'standing': 'Standing'
+const EXPERIENCE_LABELS = {
+    ShoulderFreedom: 'Shoulder Freedom',
+    HappyHips: 'Happy Hips',
+    SpineReset: 'Spine Reset'
 };
 
-// ── Phase Allocation ──────────────────────────────────────────
+const LEVEL_LABELS = {
+    Beginner: 'Beginner',
+    BeginnerIntermediate: 'Beginner Intermediate',
+    Intermediate: 'Intermediate',
+    IntermediateAdvanced: 'Intermediate Advanced',
+    Advanced: 'Advanced'
+};
 
-function phaseAllocations(duration) {
-    const templates = {
-        45: [
-            { phase: 'ARRIVE', minutes: 3 },
-            { phase: 'PREPARE', minutes: 7 },
-            { phase: 'BUILD', minutes: 15 },
-            { phase: 'INTEGRATE', minutes: 8 },
-            { phase: 'CHALLENGE', minutes: 5 },
-            { phase: 'TRANSFER', minutes: 3 },
-            { phase: 'RESET & RETEST', minutes: 4 }
-        ],
-        60: [
-            { phase: 'ARRIVE', minutes: 5 },
-            { phase: 'PREPARE', minutes: 10 },
-            { phase: 'BUILD', minutes: 20 },
-            { phase: 'INTEGRATE', minutes: 10 },
-            { phase: 'CHALLENGE', minutes: 8 },
-            { phase: 'TRANSFER', minutes: 4 },
-            { phase: 'RESET & RETEST', minutes: 3 }
-        ],
-        75: [
-            { phase: 'ARRIVE', minutes: 5 },
-            { phase: 'PREPARE', minutes: 12 },
-            { phase: 'BUILD', minutes: 25 },
-            { phase: 'INTEGRATE', minutes: 13 },
-            { phase: 'CHALLENGE', minutes: 10 },
-            { phase: 'TRANSFER', minutes: 5 },
-            { phase: 'RESET & RETEST', minutes: 5 }
-        ]
-    };
-    const alloc = templates[duration];
-    if (!alloc) throw new Error(`Unsupported duration: ${duration}`);
-    return alloc;
-}
+const PHASES = {
+    45: [
+        ['ARRIVE', 4],
+        ['PREPARE', 7],
+        ['BUILD', 15],
+        ['INTEGRATE', 7],
+        ['CHALLENGE', 6],
+        ['TRANSFER', 3],
+        ['RESET & RETEST', 3]
+    ],
+    60: [
+        ['ARRIVE', 5],
+        ['PREPARE', 10],
+        ['BUILD', 20],
+        ['INTEGRATE', 10],
+        ['CHALLENGE', 8],
+        ['TRANSFER', 4],
+        ['RESET & RETEST', 3]
+    ],
+    75: [
+        ['ARRIVE', 6],
+        ['PREPARE', 12],
+        ['BUILD', 26],
+        ['INTEGRATE', 13],
+        ['CHALLENGE', 10],
+        ['TRANSFER', 5],
+        ['RESET & RETEST', 3]
+    ]
+};
 
-// ── Strategy Building ─────────────────────────────────────────
-
-function buildStrategy(base, modifiers) {
-    const emphasis = { ...base.emphasis };
-    const explanationParts = [base.explanation_template];
-    const addedObjectives = [...(base.objectives || [])];
-    const preferredObjectives = [];
-
-    for (const mod of modifiers) {
-        explanationParts.push(mod.explanation_fragment);
-        for (const [sys, adj] of Object.entries(mod.emphasis || {})) {
-            emphasis[sys] = (emphasis[sys] || 0) + adj;
-        }
-        for (const obj of (mod.added_objectives || [])) {
-            if (!addedObjectives.includes(obj)) addedObjectives.push(obj);
-        }
-        for (const obj of (mod.preferred_objectives || [])) {
-            if (!preferredObjectives.includes(obj)) preferredObjectives.push(obj);
-        }
-    }
-
-    // Clamp negatives and normalize to 100
-    for (const k in emphasis) {
-        emphasis[k] = Math.max(0, emphasis[k]);
-    }
-    const total = Object.values(emphasis).reduce((a, b) => a + b, 0);
-    if (total > 0) {
-        for (const k in emphasis) {
-            emphasis[k] = Math.round((emphasis[k] / total) * 100);
-        }
-    }
-
-    // Fix rounding to sum to 100
-    const currentTotal = Object.values(emphasis).reduce((a, b) => a + b, 0);
-    if (currentTotal !== 100) {
-        const maxKey = Object.keys(emphasis).reduce((a, b) => emphasis[a] > emphasis[b] ? a : b);
-        emphasis[maxKey] += (100 - currentTotal);
-    }
-
-    // Sort by emphasis descending
-    const sortedEmphasis = {};
-    Object.entries(emphasis)
-        .sort((a, b) => b[1] - a[1])
-        .forEach(([k, v]) => sortedEmphasis[k] = v);
-
-    return {
-        primary_focus: base.primary_focus,
-        secondary_focus: base.secondary_focus,
-        emphasis: sortedEmphasis,
-        explanation: explanationParts.join(' '),
-        added_objectives: addedObjectives,
-        preferred_exercise_objectives: preferredObjectives
-    };
-}
-
-// ── Scoring ───────────────────────────────────────────────────
-
-function difficultyFitScore(exerciseDifficulty, classLevel) {
-    const diff = exerciseDifficulty;
-    const level = LEVEL_NUMERIC[classLevel];
-    const delta = diff - level;
-    if (delta <= -1) return 3;
-    if (delta === 0) return 5;
-    if (delta === 1) return 2;
-    return 0;
-}
-
-function roleMatchScore(roles, targetRole) {
-    return roles.includes(targetRole) ? 20 : 0;
-}
-
-function objectiveMatchScore(exerciseObjectives, preferred) {
-    return exerciseObjectives.filter(obj =>
-        preferred.some(p => p.toLowerCase() === obj.toLowerCase())
-    ).length * 5;
-}
-
-// ── Phase Role Mapping ────────────────────────────────────────
+const PHASE_PURPOSES = {
+    'ARRIVE': 'Assess baseline, settle attention, and name the class target.',
+    'PREPARE': 'Prepare breath, joints, and control for the main intervention.',
+    'BUILD': 'Apply the main Prime exercises that create the target change.',
+    'INTEGRATE': 'Connect the target system with whole-body coordination.',
+    'CHALLENGE': 'Add the planned 20 percent challenge without losing quality.',
+    'TRANSFER': 'Carry the new movement quality into functional patterns.',
+    'RESET & RETEST': 'Downshift effort and repeat the benchmark for felt comparison.'
+};
 
 const PHASE_ROLES = {
     'ARRIVE': 'Assess',
@@ -144,283 +70,330 @@ const PHASE_ROLES = {
     'RESET & RETEST': 'Restore'
 };
 
-const PHASE_PURPOSES = {
-    'ARRIVE': 'Assess baseline and prepare the body',
-    'PREPARE': 'Warm up and mobilize target systems',
-    'BUILD': 'Build strength and movement capacity',
-    'INTEGRATE': 'Connect movements across systems',
-    'CHALLENGE': 'Push 80% success / 20% challenge',
-    'TRANSFER': 'Transfer to functional movement',
-    'RESET & RETEST': 'Retest and confirm improvement'
-};
-
-function exerciseAllowedForPhase(equipment, selectedEquipment, phase) {
-    if (equipment === 'Reformer' || equipment === 'Chair') {
-        return selectedEquipment.includes(equipment);
-    }
-    if (equipment === 'Mat' || equipment === 'Standing') {
-        return phase === 'ARRIVE' || phase === 'TRANSFER' || phase === 'RESET & RETEST';
-    }
-    return false;
-}
-
-// ── Main Generator ────────────────────────────────────────────
-
 function generateClassPlan(request) {
-    // Validate
-    if (!request.movement_experience) throw new Error('movement_experience required');
-    if (!request.duration_minutes) throw new Error('duration_minutes required');
-    if (!request.level) throw new Error('level required');
+    validateRequest(request);
 
-    const allocations = phaseAllocations(request.duration_minutes);
+    const allocations = PHASES[request.duration_minutes].map(([phase, minutes]) => ({ phase, minutes }));
+    const base = SEED_DATA.strategies.find((strategy) => strategy.movement_experience === request.movement_experience);
+    if (!base) throw new Error(`No base strategy for ${request.movement_experience}`);
 
-    // Find base strategy
-    const experienceMap = {
-        'ShoulderFreedom': 'shoulder_freedom',
-        'HappyHips': 'happy_hips',
-        'SpineReset': 'spine_reset'
-    };
-    const expId = experienceMap[request.movement_experience];
-    const base = SEED_DATA.strategies.find(s => s.movement_experience === expId);
-    if (!base) throw new Error(`No strategy for ${request.movement_experience}`);
-
-    // Match observation modifiers
-    const observations = (request.observations || []).map(o => o.toLowerCase());
-    const matchedModifiers = SEED_DATA.modifiers.filter(mod =>
-        mod.keywords.some(kw => observations.some(obs => obs.includes(kw.toLowerCase())))
-    );
-
-    // Build strategy
-    const strategy = buildStrategy(base, matchedModifiers);
-
-    // Get benchmarks
-    const benchmarks = SEED_DATA.benchmarks.filter(b => b.movement_experience === expId);
-
-    // Get all exercises (convert DB enum strings)
-    const allExercises = SEED_DATA.exercises.map(e => ({
-        ...e,
-        equipment: EQUIPMENT_DB_TO_JS[e.equipment] || e.equipment,
-        contraindications: e.contraindications || []
-    }));
-
-    // Safety filter
-    const contra = (request.group_safety?.contraindications || []).map(c => c.toLowerCase());
-    const safeExercises = allExercises.filter(ex =>
-        !ex.contraindications.some(c =>
-            c.severity === 'HardExclude' && contra.includes(c.tag.toLowerCase())
-        )
-    );
-
-    // Build journey phases
-    const journey = [];
+    const modifiers = matchModifiers(request.observations || []);
+    const strategy = buildStrategy(base, modifiers);
+    const safetyTags = new Set((request.group_safety?.contraindications || []).map((tag) => tag.toLowerCase()));
+    const benchmarks = SEED_DATA.benchmarks.filter((benchmark) => benchmark.movement_experience === request.movement_experience);
+    const used = new Set();
+    const modifiedExercises = [];
     const warnings = [];
 
-    for (const alloc of allocations) {
-        const targetRole = PHASE_ROLES[alloc.phase];
-        const purpose = PHASE_PURPOSES[alloc.phase];
+    const journey = allocations.map((allocation) => {
+        const role = PHASE_ROLES[allocation.phase];
+        let ranked = rankCandidates(SEED_DATA.exercises, request, allocation.phase, role, strategy, safetyTags, used);
+        if (ranked.length === 0) {
+            ranked = rankCandidates(SEED_DATA.exercises, request, allocation.phase, role, strategy, safetyTags, new Set());
+        }
 
-        // Score and select
-        let scored = safeExercises
-            .filter(ex => ex.roles.includes(targetRole))
-            .filter(ex => {
-                const levelNum = LEVEL_NUMERIC[request.level];
-                const minNum = LEVEL_NUMERIC[ex.min_level];
-                const maxNum = LEVEL_NUMERIC[ex.max_level];
-                return minNum <= levelNum && levelNum <= maxNum;
-            })
-            .filter(ex => {
-                const equip = request.equipment || [];
-                return exerciseAllowedForPhase(ex.equipment, equip, alloc.phase);
-            })
-            .map(ex => {
-                const equipmentScore = (request.equipment || []).includes(ex.equipment) ? 5 : 0;
-                return {
-                    ex,
-                    score: roleMatchScore(ex.roles, targetRole)
-                    + difficultyFitScore(ex.difficulty, request.level)
-                    + objectiveMatchScore(ex.objectives, strategy.preferred_exercise_objectives)
-                    + equipmentScore
-                };
-            })
-            .sort((a, b) => b.score - a.score);
+        const maxCount = maxExerciseCount(allocation.phase);
+        const minCount = allocation.phase === 'BUILD' ? 2 : 1;
+        let remaining = allocation.minutes;
+        const exercises = [];
 
-        const phaseExercises = [];
-        let remaining = alloc.minutes;
+        for (const { exercise, score } of ranked) {
+            if (exercises.length >= maxCount || remaining === 0) break;
+            let regression = exercise.regression || null;
+            const safety_notes = cautionNotes(exercise, safetyTags);
+            if (requiresRegression(exercise, safetyTags)) {
+                safety_notes.push('Regression required by group safety constraint.');
+                regression = regression || 'Reduce range, load, tempo, or support the position.';
+                modifiedExercises.push({
+                    exercise_id: exercise.id,
+                    name: exercise.name,
+                    reason: 'Regression required by group safety constraint.'
+                });
+            }
 
-        for (const { ex } of scored) {
-            if (remaining === 0) break;
-            const dur = Math.min(ex.default_duration_minutes, remaining);
-            phaseExercises.push({
-                exercise_id: ex.id,
-                name: ex.name,
-                apparatus: ex.equipment,
-                role: targetRole,
-                duration_minutes: dur,
-                movement_objectives: ex.objectives,
-                why_selected: `Score-based selection for ${alloc.phase} phase`,
-                teaching_cues: ex.teaching_cues,
-                regression: ex.regression || null,
-                progression: ex.progression || null,
-                safety_notes: ex.contraindications
-                    .filter(c => c.severity === 'Caution' && contra.includes(c.tag.toLowerCase()))
-                    .map(c => c.note)
+            const duration = Math.min(exercise.default_duration_minutes, remaining);
+            remaining -= duration;
+            used.add(exercise.id);
+            exercises.push({
+                exercise_id: exercise.id,
+                name: exercise.name,
+                apparatus: exercise.equipment,
+                role,
+                duration_minutes: duration,
+                movement_objectives: exercise.objectives,
+                why_selected: `Matched ${role} role for ${allocation.phase} with score ${score}.`,
+                teaching_cues: exercise.cues,
+                regression,
+                progression: exercise.progression || null,
+                safety_notes
             });
-            remaining -= dur;
         }
 
-        if (phaseExercises.length === 0 && alloc.phase === 'BUILD') {
-            throw new Error(`No candidates for BUILD phase with role ${targetRole}`);
+        if (exercises.length < minCount) {
+            throw new Error(`No candidates for ${allocation.phase} (${role})`);
+        }
+        if (remaining > 0) {
+            warnings.push(`${allocation.phase} is under-filled by ${remaining} minute(s). Add more seed data.`);
         }
 
-        if (phaseExercises.length === 0) {
-            warnings.push(`No exercises found for ${alloc.phase} phase`);
-        }
+        return {
+            phase: allocation.phase,
+            purpose: PHASE_PURPOSES[allocation.phase],
+            target_duration_minutes: allocation.minutes,
+            exercises
+        };
+    });
 
-        journey.push({
-            phase: alloc.phase,
-            purpose,
-            target_duration_minutes: alloc.minutes,
-            exercises: phaseExercises
-        });
-    }
-
-    // Safety summary
-    const excludedExercises = allExercises.filter(ex =>
-        ex.contraindications.some(c =>
-            c.severity === 'HardExclude' && contra.includes(c.tag.toLowerCase())
-        )
-    ).map(ex => ({
-        exercise_id: ex.id,
-        name: ex.name,
-        reason: ex.contraindications
-            .filter(c => c.severity === 'HardExclude')
-            .map(c => c.note).join('; ')
-    }));
+    const excludedExercises = SEED_DATA.exercises
+        .filter((exercise) => hardExcluded(exercise, safetyTags))
+        .map((exercise) => ({
+            exercise_id: exercise.id,
+            name: exercise.name,
+            reason: exercise.contraindications
+                .filter((contra) => contra.severity === 'HardExclude' && safetyTags.has(contra.tag.toLowerCase()))
+                .map((contra) => contra.note)
+                .join('; ')
+        }));
 
     const benchmarkPlan = {
-        assessments: benchmarks.map(b => ({
-            name: b.name,
-            instruction: b.instruction,
-            what_to_watch: b.watch_points
+        assessments: benchmarks.map((benchmark) => ({
+            name: benchmark.name,
+            instruction: benchmark.instruction,
+            what_to_watch: benchmark.watch_points
         }))
     };
 
-    const classTitle = `${request.movement_experience} — ${request.duration_minutes} min ${request.level}`;
-
+    const classTitle = `${EXPERIENCE_LABELS[request.movement_experience]} - ${request.duration_minutes} min ${LEVEL_LABELS[request.level]}`;
     return {
         class_title: classTitle,
         movement_experience: request.movement_experience,
         duration_minutes: request.duration_minutes,
         level: request.level,
-        students: request.students || 1,
-        equipment: request.equipment || [],
+        students: request.students,
+        equipment: request.equipment,
         movement_strategy: strategy,
         benchmark: benchmarkPlan,
         journey,
         safety_summary: {
-            risk_policy: request.group_safety?.risk_policy || 'Balanced',
-            applied_contraindications: contra,
+            risk_policy: request.group_safety?.risk_policy || 'Conservative',
+            applied_contraindications: request.group_safety?.contraindications || [],
             excluded_exercises: excludedExercises,
-            modified_exercises: [],
-            safety_notes: [`Group safety policy: ${request.group_safety?.risk_policy || 'Balanced'}`]
+            modified_exercises: modifiedExercises,
+            safety_notes: [
+                'This plan is a teaching aid, not a medical diagnosis. Instructor judgement is required.',
+                `Group safety policy: ${request.group_safety?.risk_policy || 'Conservative'}`
+            ]
         },
         retest: {
             assessments: benchmarkPlan.assessments,
-            expected_improvement: `After this ${request.movement_experience} class, expect improved movement quality in the target systems.`
+            expected_improvement: `Students should feel clearer ${EXPERIENCE_LABELS[request.movement_experience]} movement quality and compare it against the opening benchmark.`
         },
-        expected_improvement: `Improved ${request.movement_experience} movement quality after class.`,
+        expected_improvement: `Improved ${EXPERIENCE_LABELS[request.movement_experience]} movement quality with whole-body support.`,
         warnings
     };
 }
 
-// ── Markdown Renderer ─────────────────────────────────────────
+function validateRequest(request) {
+    if (!request.students || request.students < 1) throw new Error('Students must be at least 1.');
+    if (!PHASES[request.duration_minutes]) throw new Error('Duration must be 45, 60, or 75 minutes.');
+    if (!request.equipment || request.equipment.length === 0) throw new Error('Choose at least one primary apparatus.');
+    for (const equipment of request.equipment) {
+        if (equipment !== 'Reformer' && equipment !== 'Chair') {
+            throw new Error(`${equipment} is a movement context, not primary apparatus.`);
+        }
+    }
+}
+
+function matchModifiers(observations) {
+    const text = observations.join(' ').toLowerCase();
+    return SEED_DATA.modifiers.filter((modifier) =>
+        modifier.keywords.some((keyword) => text.includes(keyword.toLowerCase()))
+    );
+}
+
+function buildStrategy(base, modifiers) {
+    const emphasis = { ...base.emphasis };
+    const objectives = [...base.objectives];
+    const preferred = [];
+    const explanation = [base.explanation_template];
+
+    for (const modifier of modifiers) {
+        for (const [system, adjustment] of Object.entries(modifier.emphasis)) {
+            emphasis[system] = (emphasis[system] || 0) + adjustment;
+        }
+        for (const objective of modifier.added_objectives) {
+            if (!objectives.includes(objective)) objectives.push(objective);
+        }
+        for (const objective of modifier.preferred_objectives) {
+            if (!preferred.includes(objective)) preferred.push(objective);
+        }
+        explanation.push(modifier.explanation_fragment);
+    }
+
+    return {
+        primary_focus: base.primary_focus,
+        secondary_focus: base.secondary_focus,
+        emphasis: normalizeEmphasis(emphasis),
+        key_objectives: objectives,
+        preferred_exercise_objectives: preferred,
+        explanation: explanation.join(' ')
+    };
+}
+
+function normalizeEmphasis(input) {
+    const entries = Object.entries(input).map(([key, value]) => [key, Math.max(0, value)]);
+    const total = entries.reduce((sum, [, value]) => sum + value, 0);
+    if (total === 0) return {};
+    const rows = entries.map(([key, value]) => {
+        const exact = (value / total) * 100;
+        return { key, pct: Math.floor(exact), rem: exact % 1 };
+    });
+    let remainder = 100 - rows.reduce((sum, row) => sum + row.pct, 0);
+    rows.sort((a, b) => b.rem - a.rem || a.key.localeCompare(b.key));
+    for (const row of rows) {
+        if (remainder === 0) break;
+        row.pct += 1;
+        remainder -= 1;
+    }
+    return Object.fromEntries(rows.sort((a, b) => a.key.localeCompare(b.key)).map((row) => [row.key, row.pct]));
+}
+
+function rankCandidates(exercises, request, phase, role, strategy, safetyTags, used) {
+    return exercises
+        .filter((exercise) => !used.has(exercise.id))
+        .filter((exercise) => exercise.roles.includes(role))
+        .filter((exercise) => equipmentAllowed(exercise.equipment, request.equipment, phase))
+        .filter((exercise) => levelAllowed(exercise, request.level, phase))
+        .filter((exercise) => !hardExcluded(exercise, safetyTags))
+        .map((exercise) => ({ exercise, score: scoreExercise(exercise, request, role, strategy, safetyTags) }))
+        .sort((a, b) => b.score - a.score || a.exercise.difficulty - b.exercise.difficulty || a.exercise.id.localeCompare(b.exercise.id));
+}
+
+function equipmentAllowed(equipment, selected, phase) {
+    if (equipment === 'Reformer' || equipment === 'Chair') return selected.includes(equipment);
+    return ['ARRIVE', 'PREPARE', 'TRANSFER', 'RESET & RETEST'].includes(phase);
+}
+
+function levelAllowed(exercise, level, phase) {
+    const classLevel = LEVEL_NUMERIC[level];
+    if (LEVEL_NUMERIC[exercise.min_level] > classLevel) return false;
+    if (classLevel <= LEVEL_NUMERIC[exercise.max_level]) return true;
+    return phase === 'CHALLENGE' && exercise.difficulty <= classLevel + 1 && Boolean(exercise.regression);
+}
+
+function scoreExercise(exercise, request, role, strategy, safetyTags) {
+    let score = 0;
+    if (exercise.roles.includes(role)) score += 20;
+    score += difficultyFitScore(exercise.difficulty, request.level);
+    if (exercise.experiences.includes(request.movement_experience)) score += 10;
+    if (exercise.systems.includes(strategy.primary_focus)) score += 8;
+    if (exercise.systems.includes(strategy.secondary_focus)) score += 4;
+    for (const objective of exercise.objectives) {
+        if (strategy.preferred_exercise_objectives.some((wanted) => objective.toLowerCase().includes(wanted.toLowerCase()))) {
+            score += 5;
+        }
+    }
+    if (request.equipment.includes(exercise.equipment)) score += 5;
+    score -= safetyPenalty(exercise, safetyTags);
+    return score;
+}
+
+function difficultyFitScore(difficulty, level) {
+    const delta = difficulty - LEVEL_NUMERIC[level];
+    if (delta <= -1) return 3;
+    if (delta === 0) return 5;
+    if (delta === 1) return 2;
+    return 0;
+}
+
+function maxExerciseCount(phase) {
+    return {
+        'ARRIVE': 2,
+        'PREPARE': 3,
+        'BUILD': 4,
+        'INTEGRATE': 3,
+        'CHALLENGE': 2,
+        'TRANSFER': 2,
+        'RESET & RETEST': 2
+    }[phase];
+}
+
+function hardExcluded(exercise, safetyTags) {
+    return exercise.contraindications.some((contra) =>
+        contra.severity === 'HardExclude' && safetyTags.has(contra.tag.toLowerCase())
+    );
+}
+
+function requiresRegression(exercise, safetyTags) {
+    return exercise.contraindications.some((contra) =>
+        contra.severity === 'RequireRegression' && safetyTags.has(contra.tag.toLowerCase())
+    );
+}
+
+function cautionNotes(exercise, safetyTags) {
+    return exercise.contraindications
+        .filter((contra) => contra.severity === 'Caution' && safetyTags.has(contra.tag.toLowerCase()))
+        .map((contra) => contra.note);
+}
+
+function safetyPenalty(exercise, safetyTags) {
+    return exercise.contraindications
+        .filter((contra) => safetyTags.has(contra.tag.toLowerCase()))
+        .reduce((sum, contra) => {
+            if (contra.severity === 'HardExclude') return sum + 1000;
+            if (contra.severity === 'RequireRegression') return sum + 8;
+            return sum + 4;
+        }, 0);
+}
 
 function renderMarkdown(plan) {
-    let md = '';
-    md += `# ${plan.class_title}\n`;
-    md += `## Total Body Pilates Class\n\n`;
-    md += `**Duration:** ${plan.duration_minutes} min  \n`;
-    md += `**Level:** ${plan.level}  \n`;
-    md += `**Students:** ${plan.students}  \n`;
-    md += `**Equipment:** [${plan.equipment.join(', ')}]\n\n`;
-    md += `---\n\n`;
-
-    // Strategy
+    let md = `# ${plan.class_title}\n\n`;
+    md += `## Class Summary\n\n`;
+    md += `- Movement experience: ${EXPERIENCE_LABELS[plan.movement_experience]}\n`;
+    md += `- Duration: ${plan.duration_minutes} min\n`;
+    md += `- Level: ${LEVEL_LABELS[plan.level]}\n`;
+    md += `- Students: ${plan.students}\n`;
+    md += `- Equipment: ${plan.equipment.join(', ')}\n\n`;
+    md += `> Teaching aid only. This is not medical advice or diagnosis; instructor judgement is required.\n\n`;
     md += `## Movement Strategy\n\n`;
-    md += `**Primary Focus:** ${plan.movement_strategy.primary_focus}  \n`;
-    md += `**Secondary Focus:** ${plan.movement_strategy.secondary_focus}\n\n`;
+    md += `- Primary focus: ${plan.movement_strategy.primary_focus}\n`;
+    md += `- Secondary focus: ${plan.movement_strategy.secondary_focus}\n\n`;
     md += `| System | Emphasis |\n|---|---:|\n`;
-    for (const [sys, val] of Object.entries(plan.movement_strategy.emphasis)) {
-        md += `| ${sys} | ${val}% |\n`;
+    for (const [system, value] of Object.entries(plan.movement_strategy.emphasis)) {
+        md += `| ${system} | ${value}% |\n`;
     }
-    md += `\n**Why this strategy:**  \n${plan.movement_strategy.explanation}\n\n`;
-    md += `---\n\n`;
-
-    // Benchmarks
+    md += `\n${plan.movement_strategy.explanation}\n\n`;
     md += `## Before Class Benchmark\n\n`;
-    for (const a of plan.benchmark.assessments) {
-        md += `### ${a.name}\n\n${a.instruction}\n`;
-        md += `**Watch for:**\n`;
-        for (const w of a.what_to_watch) {
-            md += `- ${w}\n`;
-        }
-        md += `\n`;
+    for (const assessment of plan.benchmark.assessments) {
+        md += `### ${assessment.name}\n\n${assessment.instruction}\n\n`;
+        md += `Watch for:\n${assessment.what_to_watch.map((point) => `- ${point}`).join('\n')}\n\n`;
     }
-    md += `---\n\n`;
-
-    // Journey
     md += `## Class Journey\n\n`;
     for (const phase of plan.journey) {
-        md += `### ${phase.phase} — ${phase.target_duration_minutes} min\n\n`;
-        md += `${phase.purpose}\n\n`;
-        for (const ex of phase.exercises) {
-            md += `**${ex.name}** | ${ex.apparatus} | ${ex.duration_minutes} min | Role: ${ex.role}\n\n`;
-            md += `- Objectives: ${ex.movement_objectives.join(', ')}\n`;
-            md += `- Why selected: ${ex.why_selected}\n`;
-            md += `- Cues:\n`;
-            for (const cue of ex.teaching_cues) {
-                md += `  - ${cue}\n`;
-            }
-            if (ex.regression) md += `- Regression: ${ex.regression}\n`;
-            if (ex.progression) md += `- Progression: ${ex.progression}\n`;
-            for (const note of ex.safety_notes) {
-                md += `- ⚠️ ${note}\n`;
-            }
+        md += `### ${phase.phase} - ${phase.target_duration_minutes} min\n\n${phase.purpose}\n\n`;
+        for (const exercise of phase.exercises) {
+            md += `**${exercise.name}** | ${exercise.apparatus} | ${exercise.duration_minutes} min | ${exercise.role}\n\n`;
+            md += `- Objectives: ${exercise.movement_objectives.join(', ')}\n`;
+            md += `- Why selected: ${exercise.why_selected}\n`;
+            md += `- Cues:\n${exercise.teaching_cues.map((cue) => `  - ${cue}`).join('\n')}\n`;
+            if (exercise.regression) md += `- Regression: ${exercise.regression}\n`;
+            if (exercise.progression) md += `- Progression: ${exercise.progression}\n`;
+            for (const note of exercise.safety_notes) md += `- Safety: ${note}\n`;
             md += `\n`;
         }
-        if (phase.exercises.length === 0) {
-            md += `*No exercises selected for this phase*\n\n`;
-        }
     }
-    md += `---\n\n`;
-
-    // Safety
-    md += `## Safety Notes\n\n`;
-    md += `**Risk Policy:** ${plan.safety_summary.risk_policy}\n\n`;
-    if (plan.safety_summary.applied_contraindications.length > 0) {
-        md += `**Applied group contraindications:**\n`;
-        for (const c of plan.safety_summary.applied_contraindications) {
-            md += `- ${c}\n`;
-        }
+    md += `## Safety Summary\n\n`;
+    md += `- Risk policy: ${plan.safety_summary.risk_policy}\n`;
+    if (plan.safety_summary.applied_contraindications.length) {
+        md += `- Applied contraindications: ${plan.safety_summary.applied_contraindications.join(', ')}\n`;
     }
-    if (plan.safety_summary.excluded_exercises.length > 0) {
-        md += `\n**Excluded exercises:**\n`;
-        for (const ex of plan.safety_summary.excluded_exercises) {
-            md += `- ${ex.name}: ${ex.reason}\n`;
-        }
+    for (const item of plan.safety_summary.excluded_exercises) md += `- Excluded ${item.name}: ${item.reason}\n`;
+    for (const item of plan.safety_summary.modified_exercises) md += `- Modified ${item.name}: ${item.reason}\n`;
+    for (const note of plan.safety_summary.safety_notes) md += `- ${note}\n`;
+    md += `\n## After Class Retest\n\n`;
+    for (const assessment of plan.retest.assessments) {
+        md += `### ${assessment.name}\n\n${assessment.instruction}\n\n`;
     }
-    md += `\n`;
-    for (const note of plan.safety_summary.safety_notes) {
-        md += `- ${note}\n`;
-    }
-    md += `\n---\n\n`;
-
-    // Retest
-    md += `## After Class Retest\n\n`;
-    for (const a of plan.retest.assessments) {
-        md += `### ${a.name}\n\n${a.instruction}\n\n`;
-    }
-    md += `**Expected improvement:**  \n${plan.retest.expected_improvement}\n`;
-
+    md += `**Expected improvement:** ${plan.retest.expected_improvement}\n`;
     return md;
 }

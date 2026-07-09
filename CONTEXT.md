@@ -72,7 +72,7 @@ The phase that prepares joints, breathing, motor control, and key muscles.
 
 ### BUILD
 
-The main intervention phase. It must contain 2–4 Prime exercises.
+The main intervention phase. It must contain 2-4 Prime exercises.
 
 ### INTEGRATE
 

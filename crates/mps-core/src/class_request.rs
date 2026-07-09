@@ -21,6 +21,18 @@ pub struct GroupSafety {
 
 impl ClassRequest {
     pub fn validate(&self) -> MpsResult<()> {
+        if self.students == 0 {
+            return Err(MpsError::Validation(
+                "students must be at least 1".to_string(),
+            ));
+        }
+
+        if self.students > 50 {
+            return Err(MpsError::Validation(
+                "students must be 50 or fewer for the MVP group-safety model".to_string(),
+            ));
+        }
+
         if !matches!(self.duration_minutes, 45 | 60 | 75) {
             return Err(MpsError::UnsupportedDuration {
                 requested: self.duration_minutes,
@@ -34,14 +46,11 @@ impl ClassRequest {
         }
 
         for item in &self.equipment {
-            match item {
-                Equipment::Reformer | Equipment::Chair => {}
-                Equipment::Mat | Equipment::Standing => {
-                    return Err(MpsError::UnsupportedEquipment(format!(
-                        "{:?} is a movement context, not primary apparatus",
-                        item
-                    )));
-                }
+            if !item.is_primary_apparatus() {
+                return Err(MpsError::UnsupportedEquipment(format!(
+                    "{} is a movement context, not primary apparatus",
+                    item.label()
+                )));
             }
         }
 
@@ -84,6 +93,16 @@ mod tests {
             MpsError::UnsupportedDuration { requested } => assert_eq!(requested, 50),
             other => panic!("expected UnsupportedDuration, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn zero_students_is_rejected() {
+        let mut request = valid_request();
+        request.students = 0;
+
+        let err = request.validate().unwrap_err();
+
+        assert!(matches!(err, MpsError::Validation(_)));
     }
 
     #[test]

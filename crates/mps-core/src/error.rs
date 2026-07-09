@@ -17,6 +17,9 @@ pub enum MpsError {
     #[error("Unsupported risk policy: {0}")]
     UnsupportedRiskPolicy(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("No candidates available for phase {phase} and role {role}")]
     NoCandidates { phase: String, role: String },
 

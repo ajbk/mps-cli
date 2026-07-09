@@ -1,25 +1,11 @@
-use crate::{
-    build_strategy, difficulty_fit_score, objective_match_score, phase_allocations_for_duration,
-    role_match_score, AssessmentPlan, BenchmarkPlan, ClassPlan, ClassRequest, Equipment,
-    ExerciseRole, ExerciseTeachingUnit, JourneyPhasePlan, MovementJourneyPhase, MpsRepository,
-    MpsResult, RetestPlan, SafetyExerciseNote, SafetySummary,
-};
+use std::collections::HashSet;
 
-fn exercise_allowed_for_phase(
-    equipment: Equipment,
-    selected_equipment: &[Equipment],
-    phase: MovementJourneyPhase,
-) -> bool {
-    match equipment {
-        Equipment::Reformer | Equipment::Chair => selected_equipment.contains(&equipment),
-        Equipment::Mat | Equipment::Standing => matches!(
-            phase,
-            MovementJourneyPhase::Arrive
-                | MovementJourneyPhase::Transfer
-                | MovementJourneyPhase::ResetRetest
-        ),
-    }
-}
+use crate::{
+    build_strategy, phase_allocations_for_duration, score_exercise, AssessmentPlan, BenchmarkPlan,
+    ClassLevel, ClassPlan, ClassRequest, Equipment, ExerciseRecord, ExerciseRole,
+    ExerciseTeachingUnit, JourneyPhasePlan, MovementJourneyPhase, MpsError, MpsRepository,
+    MpsResult, RetestPlan, SafetyExerciseNote, SafetySeverity, SafetySummary,
+};
 
 pub fn generate_class_plan<R: MpsRepository>(
     request: &ClassRequest,
@@ -28,198 +14,159 @@ pub fn generate_class_plan<R: MpsRepository>(
     request.validate()?;
 
     let allocations = phase_allocations_for_duration(request.duration_minutes)?;
-    let base = repository.base_strategy(request.movement_experience)?;
+    let base_strategy = repository.base_strategy(request.movement_experience)?;
     let modifiers = repository.observation_modifiers(&request.observations)?;
-    let strategy = build_strategy(base, modifiers);
-    let benchmark_records = repository.benchmarks(request.movement_experience)?;
-    let all_exercises = repository.exercises()?;
+    let strategy = build_strategy(base_strategy, modifiers);
+    let benchmarks = repository.benchmarks(request.movement_experience)?;
+    let exercises = repository.exercises()?;
+    let safety_tags = normalized_tags(&request.group_safety.contraindications);
 
-    // Safety: filter out exercises with HardExclude contraindications
-    let safe_exercises: Vec<_> = all_exercises
-        .iter()
-        .filter(|ex| {
-            !ex.contraindications.iter().any(|c| {
-                c.severity == crate::SafetySeverity::HardExclude
-                    && request
-                        .group_safety
-                        .contraindications
-                        .iter()
-                        .any(|gc| gc.eq_ignore_ascii_case(&c.tag))
-            })
-        })
-        .collect();
-
-    // Build journey phases
-    let mut journey = Vec::new();
     let mut warnings = Vec::new();
+    if benchmarks.is_empty() {
+        warnings.push("No benchmark records were found for this movement experience.".to_string());
+    }
+
+    let mut used_exercise_ids = HashSet::new();
+    let mut journey = Vec::with_capacity(allocations.len());
+    let mut modified_exercises = Vec::new();
 
     for allocation in &allocations {
-        let target_role = match allocation.phase {
-            MovementJourneyPhase::Arrive => ExerciseRole::Assess,
-            MovementJourneyPhase::Prepare => ExerciseRole::Prepare,
-            MovementJourneyPhase::Build => ExerciseRole::Prime,
-            MovementJourneyPhase::Integrate => ExerciseRole::Integrate,
-            MovementJourneyPhase::Challenge => ExerciseRole::Challenge,
-            MovementJourneyPhase::Transfer => ExerciseRole::Transfer,
-            MovementJourneyPhase::ResetRetest => ExerciseRole::Restore,
+        let target_role = target_role_for_phase(allocation.phase);
+        let phase_candidates = ranked_candidates(
+            &exercises,
+            request,
+            allocation.phase,
+            target_role,
+            &strategy,
+            &safety_tags,
+            &used_exercise_ids,
+        );
+
+        let allow_reuse_fallback = phase_candidates.is_empty();
+        let mut ranked = if allow_reuse_fallback {
+            ranked_candidates(
+                &exercises,
+                request,
+                allocation.phase,
+                target_role,
+                &strategy,
+                &safety_tags,
+                &HashSet::new(),
+            )
+        } else {
+            phase_candidates
         };
 
-        let purpose = match allocation.phase {
-            MovementJourneyPhase::Arrive => "Assess baseline and prepare the body".to_string(),
-            MovementJourneyPhase::Prepare => "Warm up and mobilize target systems".to_string(),
-            MovementJourneyPhase::Build => "Build strength and movement capacity".to_string(),
-            MovementJourneyPhase::Integrate => "Connect movements across systems".to_string(),
-            MovementJourneyPhase::Challenge => "Push 80% success / 20% challenge".to_string(),
-            MovementJourneyPhase::Transfer => "Transfer to functional movement".to_string(),
-            MovementJourneyPhase::ResetRetest => "Retest and confirm improvement".to_string(),
-        };
-
-        // Score and select exercises for this phase
-        let mut scored: Vec<_> = safe_exercises
-            .iter()
-            .filter(|ex| ex.roles.contains(&target_role))
-            .filter(|ex| {
-                let level_num = request.level.numeric();
-                ex.min_level.numeric() <= level_num && level_num <= ex.max_level.numeric()
-            })
-            .filter(|ex| {
-                exercise_allowed_for_phase(ex.equipment, &request.equipment, allocation.phase)
-            })
-            .map(|ex| {
-                let r_score = role_match_score(&ex.roles, target_role);
-                let d_score = difficulty_fit_score(ex.difficulty, request.level);
-                let o_score =
-                    objective_match_score(&ex.objectives, &strategy.preferred_exercise_objectives);
-                let equipment_score: i32 = if request.equipment.contains(&ex.equipment) {
-                    5
-                } else {
-                    0
-                };
-                (ex, r_score + d_score + o_score + equipment_score)
-            })
-            .collect();
-
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
-
-        // Select top exercises that fit in the time budget
-        let mut phase_exercises = Vec::new();
+        let max_count = max_exercise_count(allocation.phase);
+        let min_count = min_exercise_count(allocation.phase);
         let mut remaining = allocation.minutes;
+        let mut selected = Vec::new();
 
-        for (ex, _score) in &scored {
-            if remaining == 0 {
+        for (exercise, score) in ranked.drain(..) {
+            if selected.len() >= max_count || remaining == 0 {
                 break;
             }
-            let dur = ex.default_duration_minutes.min(remaining);
-            phase_exercises.push(ExerciseTeachingUnit {
-                exercise_id: ex.id.clone(),
-                name: ex.name.clone(),
-                apparatus: ex.equipment,
+
+            let mut regression = exercise.regression.clone();
+            let mut safety_notes = caution_notes(exercise, &safety_tags);
+            if requires_regression(exercise, &safety_tags) {
+                let note = "Regression required by group safety constraint.".to_string();
+                safety_notes.push(note.clone());
+                if regression.is_none() {
+                    regression = Some("Reduce range, load, tempo, or support the position.".into());
+                }
+                modified_exercises.push(SafetyExerciseNote {
+                    exercise_id: exercise.id.clone(),
+                    name: exercise.name.clone(),
+                    reason: note,
+                });
+            }
+
+            let duration = exercise.default_duration_minutes.min(remaining);
+            remaining -= duration;
+            used_exercise_ids.insert(exercise.id.clone());
+
+            selected.push(ExerciseTeachingUnit {
+                exercise_id: exercise.id.clone(),
+                name: exercise.name.clone(),
+                apparatus: exercise.equipment,
                 role: target_role,
-                duration_minutes: dur,
-                movement_objectives: ex.objectives.clone(),
-                why_selected: format!("Score-based selection for {:?} phase", allocation.phase),
-                teaching_cues: ex.teaching_cues.clone(),
-                regression: ex.regression.clone(),
-                progression: ex.progression.clone(),
-                safety_notes: ex
-                    .contraindications
-                    .iter()
-                    .filter(|c| {
-                        c.severity == crate::SafetySeverity::Caution
-                            && request
-                                .group_safety
-                                .contraindications
-                                .iter()
-                                .any(|gc| gc.eq_ignore_ascii_case(&c.tag))
-                    })
-                    .map(|c| c.note.clone())
-                    .collect(),
+                duration_minutes: duration,
+                movement_objectives: exercise.objectives.clone(),
+                why_selected: format!(
+                    "Matched {} role for {} with score {}.",
+                    role_label(target_role),
+                    allocation.phase.label(),
+                    score
+                ),
+                teaching_cues: exercise.teaching_cues.clone(),
+                regression,
+                progression: exercise.progression.clone(),
+                safety_notes,
             });
-            remaining -= dur;
         }
 
-        if phase_exercises.is_empty() && matches!(allocation.phase, MovementJourneyPhase::Build) {
-            return Err(crate::MpsError::NoCandidates {
+        if selected.len() < min_count {
+            return Err(MpsError::NoCandidates {
                 phase: allocation.phase.label().to_string(),
-                role: format!("{:?}", target_role),
+                role: role_label(target_role).to_string(),
             });
         }
 
-        if phase_exercises.is_empty() {
+        if remaining > 0 {
             warnings.push(format!(
-                "No exercises found for {:?} phase",
-                allocation.phase
+                "{} is under-filled by {} minute(s). Add more seed data for this role/equipment/level.",
+                allocation.phase.label(),
+                remaining
             ));
         }
 
         journey.push(JourneyPhasePlan {
             phase: allocation.phase,
-            purpose,
+            purpose: allocation.phase.purpose().to_string(),
             target_duration_minutes: allocation.minutes,
-            exercises: phase_exercises,
+            exercises: selected,
         });
     }
 
-    // Build benchmark
+    validate_journey(&journey)?;
+
     let benchmark = BenchmarkPlan {
-        assessments: benchmark_records
+        assessments: benchmarks
             .iter()
-            .map(|br| AssessmentPlan {
-                name: br.name.clone(),
-                instruction: br.instruction.clone(),
-                what_to_watch: br.watch_points.clone(),
+            .map(|record| AssessmentPlan {
+                name: record.name.clone(),
+                instruction: record.instruction.clone(),
+                what_to_watch: record.watch_points.clone(),
             })
             .collect(),
     };
 
-    // Build safety summary
-    let excluded: Vec<_> = all_exercises
-        .iter()
-        .filter(|ex| {
-            ex.contraindications.iter().any(|c| {
-                c.severity == crate::SafetySeverity::HardExclude
-                    && request
-                        .group_safety
-                        .contraindications
-                        .iter()
-                        .any(|gc| gc.eq_ignore_ascii_case(&c.tag))
-            })
-        })
-        .map(|ex| SafetyExerciseNote {
-            exercise_id: ex.id.clone(),
-            name: ex.name.clone(),
-            reason: ex
-                .contraindications
-                .iter()
-                .filter(|c| c.severity == crate::SafetySeverity::HardExclude)
-                .map(|c| c.note.clone())
-                .collect::<Vec<_>>()
-                .join("; "),
-        })
-        .collect();
-
+    let excluded_exercises = excluded_exercises(&exercises, &safety_tags);
     let safety_summary = SafetySummary {
         risk_policy: request.group_safety.risk_policy,
         applied_contraindications: request.group_safety.contraindications.clone(),
-        excluded_exercises: excluded,
-        modified_exercises: vec![],
-        safety_notes: vec![format!(
-            "Group safety policy: {:?}",
-            request.group_safety.risk_policy
-        )],
+        excluded_exercises,
+        modified_exercises,
+        safety_notes: vec![
+            "This plan is a teaching aid, not a medical diagnosis. Instructor judgement is required."
+                .to_string(),
+            format!("Group safety policy: {:?}", request.group_safety.risk_policy),
+        ],
     };
 
-    // Build class title
     let class_title = format!(
-        "{:?} — {} min {:?}",
-        request.movement_experience, request.duration_minutes, request.level
+        "{} - {} min {}",
+        request.movement_experience.label(),
+        request.duration_minutes,
+        request.level.label()
     );
 
     let retest = RetestPlan {
         assessments: benchmark.assessments.clone(),
         expected_improvement: format!(
-            "After this {:?} class, expect improved movement quality in the target systems.",
-            request.movement_experience
+            "Students should feel clearer {} movement quality and be able to compare it against the opening benchmark.",
+            request.movement_experience.label()
         ),
     };
 
@@ -236,17 +183,242 @@ pub fn generate_class_plan<R: MpsRepository>(
         safety_summary,
         retest,
         expected_improvement: format!(
-            "Improved {:?} movement quality after class.",
-            request.movement_experience
+            "Improved {} movement quality with whole-body support.",
+            request.movement_experience.label()
         ),
         warnings,
     })
 }
 
+fn ranked_candidates<'a>(
+    exercises: &'a [ExerciseRecord],
+    request: &ClassRequest,
+    phase: MovementJourneyPhase,
+    role: ExerciseRole,
+    strategy: &crate::MovementStrategyPlan,
+    safety_tags: &HashSet<String>,
+    used_exercise_ids: &HashSet<String>,
+) -> Vec<(&'a ExerciseRecord, i32)> {
+    let mut candidates: Vec<_> = exercises
+        .iter()
+        .filter(|exercise| !used_exercise_ids.contains(&exercise.id))
+        .filter(|exercise| exercise.roles.contains(&role))
+        .filter(|exercise| {
+            exercise_allowed_for_phase(exercise.equipment, &request.equipment, phase)
+        })
+        .filter(|exercise| level_allowed(exercise, request.level, phase))
+        .filter(|exercise| !hard_excluded(exercise, safety_tags))
+        .map(|exercise| {
+            let mut score = score_exercise(
+                exercise,
+                role,
+                request.level,
+                request.movement_experience,
+                strategy.primary_focus,
+                strategy.secondary_focus,
+                &strategy.preferred_exercise_objectives,
+            );
+            if request.equipment.contains(&exercise.equipment) {
+                score += 5;
+            }
+            score -= safety_penalty(exercise, safety_tags);
+            (exercise, score)
+        })
+        .collect();
+
+    candidates.sort_by(|(a_ex, a_score), (b_ex, b_score)| {
+        b_score
+            .cmp(a_score)
+            .then_with(|| a_ex.difficulty.cmp(&b_ex.difficulty))
+            .then_with(|| a_ex.id.cmp(&b_ex.id))
+    });
+    candidates
+}
+
+fn exercise_allowed_for_phase(
+    equipment: Equipment,
+    selected_equipment: &[Equipment],
+    phase: MovementJourneyPhase,
+) -> bool {
+    if equipment.is_primary_apparatus() {
+        return selected_equipment.contains(&equipment);
+    }
+
+    matches!(
+        phase,
+        MovementJourneyPhase::Arrive
+            | MovementJourneyPhase::Prepare
+            | MovementJourneyPhase::Transfer
+            | MovementJourneyPhase::ResetRetest
+    )
+}
+
+fn level_allowed(
+    exercise: &ExerciseRecord,
+    request_level: ClassLevel,
+    phase: MovementJourneyPhase,
+) -> bool {
+    let level = request_level.numeric();
+    if exercise.min_level.numeric() > level {
+        return false;
+    }
+
+    if level <= exercise.max_level.numeric() {
+        return true;
+    }
+
+    matches!(phase, MovementJourneyPhase::Challenge)
+        && exercise.difficulty <= level + 1
+        && exercise.regression.is_some()
+}
+
+fn target_role_for_phase(phase: MovementJourneyPhase) -> ExerciseRole {
+    match phase {
+        MovementJourneyPhase::Arrive => ExerciseRole::Assess,
+        MovementJourneyPhase::Prepare => ExerciseRole::Prepare,
+        MovementJourneyPhase::Build => ExerciseRole::Prime,
+        MovementJourneyPhase::Integrate => ExerciseRole::Integrate,
+        MovementJourneyPhase::Challenge => ExerciseRole::Challenge,
+        MovementJourneyPhase::Transfer => ExerciseRole::Transfer,
+        MovementJourneyPhase::ResetRetest => ExerciseRole::Restore,
+    }
+}
+
+fn max_exercise_count(phase: MovementJourneyPhase) -> usize {
+    match phase {
+        MovementJourneyPhase::Arrive => 2,
+        MovementJourneyPhase::Prepare => 3,
+        MovementJourneyPhase::Build => 4,
+        MovementJourneyPhase::Integrate => 3,
+        MovementJourneyPhase::Challenge => 2,
+        MovementJourneyPhase::Transfer => 2,
+        MovementJourneyPhase::ResetRetest => 2,
+    }
+}
+
+fn min_exercise_count(phase: MovementJourneyPhase) -> usize {
+    match phase {
+        MovementJourneyPhase::Build => 2,
+        _ => 1,
+    }
+}
+
+fn validate_journey(journey: &[JourneyPhasePlan]) -> MpsResult<()> {
+    if journey.len() != 7 {
+        return Err(MpsError::Generation(format!(
+            "expected 7 phases, got {}",
+            journey.len()
+        )));
+    }
+
+    let build = journey
+        .iter()
+        .find(|phase| phase.phase == MovementJourneyPhase::Build)
+        .ok_or_else(|| MpsError::Generation("BUILD phase is missing".to_string()))?;
+    let prime_count = build
+        .exercises
+        .iter()
+        .filter(|exercise| exercise.role == ExerciseRole::Prime)
+        .count();
+
+    if !(2..=4).contains(&prime_count) {
+        return Err(MpsError::Generation(format!(
+            "BUILD must contain 2-4 Prime exercises, got {prime_count}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn normalized_tags(tags: &[String]) -> HashSet<String> {
+    tags.iter()
+        .map(|tag| tag.trim().to_lowercase())
+        .filter(|tag| !tag.is_empty())
+        .collect()
+}
+
+fn hard_excluded(exercise: &ExerciseRecord, safety_tags: &HashSet<String>) -> bool {
+    exercise.contraindications.iter().any(|contra| {
+        contra.severity == SafetySeverity::HardExclude
+            && safety_tags.contains(&contra.tag.to_lowercase())
+    })
+}
+
+fn requires_regression(exercise: &ExerciseRecord, safety_tags: &HashSet<String>) -> bool {
+    exercise.contraindications.iter().any(|contra| {
+        contra.severity == SafetySeverity::RequireRegression
+            && safety_tags.contains(&contra.tag.to_lowercase())
+    })
+}
+
+fn caution_notes(exercise: &ExerciseRecord, safety_tags: &HashSet<String>) -> Vec<String> {
+    exercise
+        .contraindications
+        .iter()
+        .filter(|contra| {
+            contra.severity == SafetySeverity::Caution
+                && safety_tags.contains(&contra.tag.to_lowercase())
+        })
+        .map(|contra| contra.note.clone())
+        .collect()
+}
+
+fn safety_penalty(exercise: &ExerciseRecord, safety_tags: &HashSet<String>) -> i32 {
+    exercise
+        .contraindications
+        .iter()
+        .filter(|contra| safety_tags.contains(&contra.tag.to_lowercase()))
+        .map(|contra| match contra.severity {
+            SafetySeverity::HardExclude => 1000,
+            SafetySeverity::RequireRegression => 8,
+            SafetySeverity::Caution => 4,
+        })
+        .sum()
+}
+
+fn excluded_exercises(
+    exercises: &[ExerciseRecord],
+    safety_tags: &HashSet<String>,
+) -> Vec<SafetyExerciseNote> {
+    exercises
+        .iter()
+        .filter(|exercise| hard_excluded(exercise, safety_tags))
+        .map(|exercise| SafetyExerciseNote {
+            exercise_id: exercise.id.clone(),
+            name: exercise.name.clone(),
+            reason: exercise
+                .contraindications
+                .iter()
+                .filter(|contra| {
+                    contra.severity == SafetySeverity::HardExclude
+                        && safety_tags.contains(&contra.tag.to_lowercase())
+                })
+                .map(|contra| contra.note.clone())
+                .collect::<Vec<_>>()
+                .join("; "),
+        })
+        .collect()
+}
+
+fn role_label(role: ExerciseRole) -> &'static str {
+    match role {
+        ExerciseRole::Assess => "Assess",
+        ExerciseRole::Prepare => "Prepare",
+        ExerciseRole::Prime => "Prime",
+        ExerciseRole::Integrate => "Integrate",
+        ExerciseRole::Challenge => "Challenge",
+        ExerciseRole::Transfer => "Transfer",
+        ExerciseRole::Restore => "Restore",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::*;
+    use crate::{
+        BaseStrategyRecord, BenchmarkRecord, ContraindicationRecord, GroupSafety,
+        MovementExperience, MovementSystem, ObservationModifierRecord, RiskPolicy,
+    };
     use std::collections::BTreeMap;
 
     struct FakeRepository;
@@ -260,163 +432,127 @@ mod tests {
                 emphasis: BTreeMap::from([
                     ("Shoulder".to_string(), 40),
                     ("Thoracic".to_string(), 20),
-                    ("Core".to_string(), 15),
+                    ("BreathCore".to_string(), 15),
                     ("Hip".to_string(), 10),
                     ("Legs".to_string(), 10),
                     ("Balance".to_string(), 5),
                 ]),
-                objectives: vec!["Improve shoulder mobility".to_string()],
+                objectives: vec!["Increase overhead reach range".to_string()],
                 explanation_template: "Shoulder Freedom base strategy.".to_string(),
             })
         }
+
         fn observation_modifiers(
             &self,
             _obs: &[String],
         ) -> MpsResult<Vec<ObservationModifierRecord>> {
             Ok(vec![])
         }
+
         fn benchmarks(&self, _exp: MovementExperience) -> MpsResult<Vec<BenchmarkRecord>> {
             Ok(vec![BenchmarkRecord {
                 id: "overhead_reach".to_string(),
-                name: "Overhead Reach Test".to_string(),
-                instruction: "Reach arms overhead".to_string(),
-                watch_points: vec!["Limited ROM".to_string()],
+                name: "Overhead Reach".to_string(),
+                instruction: "Reach both arms overhead and note compensation.".to_string(),
+                watch_points: vec!["Rib flare".to_string()],
             }])
         }
+
         fn exercises(&self) -> MpsResult<Vec<ExerciseRecord>> {
-            let make_ex = |id: &str,
-                           name: &str,
-                           equip: Equipment,
-                           roles: Vec<ExerciseRole>,
-                           min_l: ClassLevel,
-                           max_l: ClassLevel,
-                           diff: u8|
-             -> ExerciseRecord {
-                ExerciseRecord {
-                    id: id.to_string(),
-                    name: name.to_string(),
-                    description: "".to_string(),
-                    equipment: equip,
-                    roles,
-                    objectives: vec!["Mobility".to_string()],
-                    min_level: min_l,
-                    max_level: max_l,
-                    difficulty: diff,
-                    default_duration_minutes: 5,
-                    teaching_cues: vec!["Breathe".to_string()],
-                    regression: None,
-                    progression: None,
-                    contraindications: vec![],
-                }
-            };
             Ok(vec![
-                make_ex(
-                    "arm_raise",
-                    "Arm Raise",
-                    Equipment::Standing,
-                    vec![ExerciseRole::Assess, ExerciseRole::Prepare],
-                    ClassLevel::Beginner,
-                    ClassLevel::Advanced,
-                    1,
-                ),
-                make_ex(
-                    "cat_cow",
-                    "Cat-Cow",
-                    Equipment::Mat,
-                    vec![ExerciseRole::Prepare, ExerciseRole::Restore],
-                    ClassLevel::Beginner,
-                    ClassLevel::Advanced,
-                    1,
-                ),
-                make_ex(
-                    "pelvic_curl",
-                    "Pelvic Curl",
+                exercise("arm_raise", Equipment::Standing, &[ExerciseRole::Assess]),
+                exercise("breath_reset", Equipment::Mat, &[ExerciseRole::Prepare]),
+                exercise("cat_cow", Equipment::Mat, &[ExerciseRole::Restore]),
+                exercise(
+                    "arms_in_straps",
                     Equipment::Reformer,
-                    vec![ExerciseRole::Prepare, ExerciseRole::Prime],
-                    ClassLevel::Beginner,
-                    ClassLevel::IntermediateAdvanced,
-                    1,
+                    &[ExerciseRole::Prime, ExerciseRole::Integrate],
                 ),
-                make_ex(
-                    "arms_straps",
-                    "Arms in Straps",
-                    Equipment::Reformer,
-                    vec![ExerciseRole::Prime, ExerciseRole::Integrate],
-                    ClassLevel::BeginnerIntermediate,
-                    ClassLevel::Advanced,
-                    3,
-                ),
-                make_ex(
+                exercise(
                     "pulling_straps",
-                    "Pulling Straps",
                     Equipment::Reformer,
-                    vec![ExerciseRole::Prime, ExerciseRole::Challenge],
-                    ClassLevel::Intermediate,
-                    ClassLevel::Advanced,
-                    3,
+                    &[ExerciseRole::Prime, ExerciseRole::Challenge],
                 ),
-                make_ex(
-                    "chair_pump",
-                    "Chair Pump",
+                exercise("chair_push_down", Equipment::Chair, &[ExerciseRole::Prime]),
+                exercise("swan_chair", Equipment::Chair, &[ExerciseRole::Prime]),
+                exercise(
+                    "mermaid_chair",
                     Equipment::Chair,
-                    vec![ExerciseRole::Prime, ExerciseRole::Challenge],
-                    ClassLevel::BeginnerIntermediate,
-                    ClassLevel::Advanced,
-                    3,
+                    &[ExerciseRole::Integrate],
                 ),
-                make_ex(
-                    "standing_roll",
-                    "Standing Roll Down",
+                exercise(
+                    "standing_push",
+                    Equipment::Chair,
+                    &[ExerciseRole::Challenge],
+                ),
+                exercise(
+                    "chair_balance",
+                    Equipment::Chair,
+                    &[ExerciseRole::Challenge],
+                ),
+                exercise(
+                    "standing_reach",
                     Equipment::Standing,
-                    vec![ExerciseRole::Restore],
-                    ClassLevel::Beginner,
-                    ClassLevel::Advanced,
-                    1,
+                    &[ExerciseRole::Transfer],
                 ),
             ])
         }
     }
 
-    #[test]
-    fn generates_7_phases() {
-        let request = ClassRequest {
-            students: 3,
+    fn exercise(id: &str, equipment: Equipment, roles: &[ExerciseRole]) -> ExerciseRecord {
+        ExerciseRecord {
+            id: id.to_string(),
+            name: id.replace('_', " "),
+            description: String::new(),
+            equipment,
+            roles: roles.to_vec(),
+            movement_systems: vec![MovementSystem::Shoulder, MovementSystem::Thoracic],
+            experience_tags: vec![MovementExperience::ShoulderFreedom],
+            objectives: vec!["Increase overhead reach range".to_string()],
+            min_level: ClassLevel::Beginner,
+            max_level: ClassLevel::Advanced,
+            difficulty: 2,
+            default_duration_minutes: 5,
+            teaching_cues: vec!["Move with breath.".to_string()],
+            regression: Some("Reduce range.".to_string()),
+            progression: Some("Add tempo.".to_string()),
+            contraindications: vec![],
+        }
+    }
+
+    fn request(equipment: Vec<Equipment>) -> ClassRequest {
+        ClassRequest {
+            students: 4,
             movement_experience: MovementExperience::ShoulderFreedom,
             level: ClassLevel::BeginnerIntermediate,
-            equipment: vec![Equipment::Reformer, Equipment::Chair],
+            equipment,
             duration_minutes: 60,
             observations: vec![],
             group_safety: GroupSafety {
                 contraindications: vec![],
                 risk_policy: RiskPolicy::Balanced,
             },
-        };
-        let plan = generate_class_plan(&request, &FakeRepository).unwrap();
+        }
+    }
+
+    #[test]
+    fn generates_all_phases_with_build_prime_count() {
+        let plan = generate_class_plan(&request(vec![Equipment::Reformer]), &FakeRepository)
+            .expect("generate");
+
         assert_eq!(plan.journey.len(), 7);
-        assert_eq!(plan.duration_minutes, 60);
-        assert_eq!(plan.movement_strategy.emphasis.values().sum::<u32>(), 100);
-        assert!(plan
+        let build = plan
             .journey
             .iter()
-            .any(|p| p.phase == MovementJourneyPhase::Build));
+            .find(|phase| phase.phase == MovementJourneyPhase::Build)
+            .unwrap();
+        assert!((2..=4).contains(&build.exercises.len()));
     }
 
     #[test]
     fn selected_primary_apparatus_is_enforced() {
-        let request = ClassRequest {
-            students: 3,
-            movement_experience: MovementExperience::ShoulderFreedom,
-            level: ClassLevel::BeginnerIntermediate,
-            equipment: vec![Equipment::Chair],
-            duration_minutes: 60,
-            observations: vec![],
-            group_safety: GroupSafety {
-                contraindications: vec![],
-                risk_policy: RiskPolicy::Balanced,
-            },
-        };
-
-        let plan = generate_class_plan(&request, &FakeRepository).unwrap();
+        let plan =
+            generate_class_plan(&request(vec![Equipment::Chair]), &FakeRepository).expect("plan");
 
         assert!(!plan
             .journey
@@ -431,38 +567,50 @@ mod tests {
     }
 
     #[test]
-    fn movement_context_is_allowed_for_context_phases() {
-        let request = ClassRequest {
-            students: 3,
-            movement_experience: MovementExperience::ShoulderFreedom,
-            level: ClassLevel::BeginnerIntermediate,
-            equipment: vec![Equipment::Chair],
-            duration_minutes: 60,
-            observations: vec![],
-            group_safety: GroupSafety {
-                contraindications: vec![],
-                risk_policy: RiskPolicy::Balanced,
-            },
-        };
+    fn hard_excluded_exercises_are_reported_and_not_selected() {
+        struct SafetyRepo;
+        impl MpsRepository for SafetyRepo {
+            fn base_strategy(&self, exp: MovementExperience) -> MpsResult<BaseStrategyRecord> {
+                FakeRepository.base_strategy(exp)
+            }
+            fn observation_modifiers(
+                &self,
+                obs: &[String],
+            ) -> MpsResult<Vec<ObservationModifierRecord>> {
+                FakeRepository.observation_modifiers(obs)
+            }
+            fn benchmarks(&self, exp: MovementExperience) -> MpsResult<Vec<BenchmarkRecord>> {
+                FakeRepository.benchmarks(exp)
+            }
+            fn exercises(&self) -> MpsResult<Vec<ExerciseRecord>> {
+                let mut exercises = FakeRepository.exercises()?;
+                exercises
+                    .iter_mut()
+                    .find(|exercise| exercise.id == "standing_push")
+                    .unwrap()
+                    .contraindications
+                    .push(ContraindicationRecord {
+                        tag: "wrist_pain".to_string(),
+                        severity: SafetySeverity::HardExclude,
+                        note: "Avoid loaded wrist pressure.".to_string(),
+                    });
+                Ok(exercises)
+            }
+        }
 
-        let plan = generate_class_plan(&request, &FakeRepository).unwrap();
+        let mut req = request(vec![Equipment::Chair]);
+        req.group_safety.contraindications = vec!["wrist_pain".to_string()];
+        let plan = generate_class_plan(&req, &SafetyRepo).expect("plan");
 
-        let arrive = plan
+        assert!(!plan
             .journey
             .iter()
-            .find(|phase| phase.phase == MovementJourneyPhase::Arrive)
-            .unwrap();
-        let reset = plan
-            .journey
+            .flat_map(|phase| &phase.exercises)
+            .any(|exercise| exercise.exercise_id == "standing_push"));
+        assert!(plan
+            .safety_summary
+            .excluded_exercises
             .iter()
-            .find(|phase| phase.phase == MovementJourneyPhase::ResetRetest)
-            .unwrap();
-
-        assert!(arrive.exercises.iter().any(|exercise| {
-            matches!(exercise.apparatus, Equipment::Mat | Equipment::Standing)
-        }));
-        assert!(reset.exercises.iter().any(|exercise| {
-            matches!(exercise.apparatus, Equipment::Mat | Equipment::Standing)
-        }));
+            .any(|exercise| exercise.exercise_id == "standing_push"));
     }
 }

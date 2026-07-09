@@ -90,6 +90,18 @@ CREATE TABLE exercise_objectives (
     PRIMARY KEY (exercise_id, objective)
 );
 
+CREATE TABLE exercise_movement_systems (
+    exercise_id TEXT NOT NULL REFERENCES exercises(id),
+    system_name TEXT NOT NULL REFERENCES movement_systems(id),
+    PRIMARY KEY (exercise_id, system_name)
+);
+
+CREATE TABLE exercise_experience_tags (
+    exercise_id TEXT NOT NULL REFERENCES exercises(id),
+    movement_experience TEXT NOT NULL REFERENCES movement_experiences(id),
+    PRIMARY KEY (exercise_id, movement_experience)
+);
+
 CREATE TABLE exercise_teaching_cues (
     exercise_id TEXT NOT NULL REFERENCES exercises(id),
     cue TEXT NOT NULL,

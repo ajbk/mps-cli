@@ -10,7 +10,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{FromRow, SqlitePool};
 use tokio::runtime::Runtime;
 
-// ── helpers: enum ↔ DB string ──────────────────────────────────────
+// Helpers: enum <-> DB string.
 
 fn experience_to_db(exp: MovementExperience) -> &'static str {
     match exp {
@@ -91,7 +91,7 @@ fn severity_from_db(s: &str) -> MpsResult<SafetySeverity> {
     }
 }
 
-// ── row structs (for sqlx::FromRow) ────────────────────────────────
+// Row structs for sqlx::FromRow.
 
 #[derive(FromRow)]
 struct StrategyRow {
@@ -165,6 +165,18 @@ struct ExerciseObjectiveRow {
 }
 
 #[derive(FromRow)]
+struct ExerciseSystemRow {
+    exercise_id: String,
+    system_name: String,
+}
+
+#[derive(FromRow)]
+struct ExerciseExperienceRow {
+    exercise_id: String,
+    movement_experience: String,
+}
+
+#[derive(FromRow)]
 struct ExerciseCueRow {
     exercise_id: String,
     cue: String,
@@ -192,7 +204,7 @@ struct BenchmarkWatchPointRow {
     watch_point: String,
 }
 
-// ── repository ─────────────────────────────────────────────────────
+// Repository.
 
 pub struct SqliteRepository {
     pool: SqlitePool,
@@ -347,7 +359,7 @@ impl MpsRepository for SqliteRepository {
             .await
             .map_err(|e| MpsError::Repository(format!("Keywords query failed: {e}")))?;
 
-            // 2. Build keyword → modifier_id mapping and find matching modifier IDs
+            // 2. Build keyword-to-modifier mapping and find matching modifier IDs.
             let mut matched_ids: HashSet<String> = HashSet::new();
             for obs_str in &obs {
                 let obs_lower = obs_str.to_lowercase();
@@ -374,7 +386,7 @@ impl MpsRepository for SqliteRepository {
                 "SELECT id, explanation_fragment FROM observation_modifiers WHERE id IN ({placeholders})"
             );
 
-            // Can't use query_as with dynamic number of binds easily — use raw query
+            // query_as cannot bind a dynamic IN list directly, so build the query.
             let mut query = sqlx::query_as::<_, ModifierRow>(&sql);
             for id in &matched_ids {
                 query = query.bind(id);
@@ -565,6 +577,19 @@ impl MpsRepository for SqliteRepository {
                     .await
                     .map_err(|e| MpsError::Repository(format!("Obj query failed: {e}")))?;
 
+            let system_rows: Vec<ExerciseSystemRow> =
+                sqlx::query_as("SELECT exercise_id, system_name FROM exercise_movement_systems")
+                    .fetch_all(&pool)
+                    .await
+                    .map_err(|e| MpsError::Repository(format!("Systems query failed: {e}")))?;
+
+            let experience_rows: Vec<ExerciseExperienceRow> = sqlx::query_as(
+                "SELECT exercise_id, movement_experience FROM exercise_experience_tags",
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| MpsError::Repository(format!("Experience tags query failed: {e}")))?;
+
             let cue_rows: Vec<ExerciseCueRow> =
                 sqlx::query_as("SELECT exercise_id, cue, sort_order FROM exercise_teaching_cues")
                     .fetch_all(&pool)
@@ -593,6 +618,22 @@ impl MpsRepository for SqliteRepository {
                     .entry(o.exercise_id.clone())
                     .or_default()
                     .push(o.objective.clone());
+            }
+
+            let mut system_map: HashMap<String, Vec<String>> = HashMap::new();
+            for system in &system_rows {
+                system_map
+                    .entry(system.exercise_id.clone())
+                    .or_default()
+                    .push(system.system_name.clone());
+            }
+
+            let mut experience_map: HashMap<String, Vec<String>> = HashMap::new();
+            for experience in &experience_rows {
+                experience_map
+                    .entry(experience.exercise_id.clone())
+                    .or_default()
+                    .push(experience.movement_experience.clone());
             }
 
             let mut cue_map: HashMap<String, Vec<(i32, String)>> = HashMap::new();
@@ -631,6 +672,20 @@ impl MpsRepository for SqliteRepository {
 
                 let objectives = obj_map.remove(&ex.id).unwrap_or_default();
 
+                let movement_systems = system_map
+                    .remove(&ex.id)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|system| system_from_db(system))
+                    .collect::<MpsResult<Vec<_>>>()?;
+
+                let experience_tags = experience_map
+                    .remove(&ex.id)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|experience| experience_from_db(experience))
+                    .collect::<MpsResult<Vec<_>>>()?;
+
                 let teaching_cues: Vec<String> = cue_map
                     .remove(&ex.id)
                     .unwrap_or_default()
@@ -657,6 +712,8 @@ impl MpsRepository for SqliteRepository {
                     description: ex.description.clone(),
                     equipment: equipment_from_db(&ex.equipment)?,
                     roles,
+                    movement_systems,
+                    experience_tags,
                     objectives,
                     min_level: class_level_from_db(&ex.min_level)?,
                     max_level: class_level_from_db(&ex.max_level)?,
@@ -757,7 +814,7 @@ mod tests {
             .unwrap();
         let ts = mods.iter().find(|m| m.id == "thoracic_stiffness").unwrap();
         assert!(ts.emphasis_adjustments.contains_key("Thoracic"));
-        assert!(ts.emphasis_adjustments.contains_key("Shoulder"));
+        assert!(ts.emphasis_adjustments.contains_key("Spine"));
         assert!(!ts.explanation_fragment.is_empty());
     }
 
@@ -784,11 +841,8 @@ mod tests {
             .benchmarks(MovementExperience::ShoulderFreedom)
             .unwrap();
         assert_eq!(benches.len(), 2);
-        assert!(benches.iter().any(|b| b.id == "overhead_reach_test"));
-        let ort = benches
-            .iter()
-            .find(|b| b.id == "overhead_reach_test")
-            .unwrap();
+        assert!(benches.iter().any(|b| b.id == "overhead_reach"));
+        let ort = benches.iter().find(|b| b.id == "overhead_reach").unwrap();
         assert_eq!(ort.watch_points.len(), 3);
     }
 
@@ -797,7 +851,7 @@ mod tests {
         let repo = repo_with_seed();
         let benches = repo.benchmarks(MovementExperience::HappyHips).unwrap();
         assert_eq!(benches.len(), 2);
-        assert!(benches.iter().any(|b| b.id == "deep_squat_test"));
+        assert!(benches.iter().any(|b| b.id == "deep_squat"));
     }
 
     #[test]
@@ -819,10 +873,11 @@ mod tests {
         assert_eq!(fw.difficulty, 2);
         assert!(fw.roles.contains(&ExerciseRole::Prepare));
         assert!(fw.roles.contains(&ExerciseRole::Prime));
+        assert!(fw.movement_systems.contains(&MovementSystem::Legs));
+        assert!(fw.experience_tags.contains(&MovementExperience::HappyHips));
         assert_eq!(fw.objectives.len(), 3);
-        assert_eq!(fw.teaching_cues.len(), 3);
-        assert_eq!(fw.contraindications.len(), 1);
-        assert_eq!(fw.contraindications[0].severity, SafetySeverity::Caution);
+        assert_eq!(fw.teaching_cues.len(), 2);
+        assert!(fw.contraindications.is_empty());
     }
 
     #[test]

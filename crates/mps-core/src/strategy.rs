@@ -40,27 +40,37 @@ pub fn build_strategy(
 }
 
 fn normalize_to_100(input: BTreeMap<String, i32>) -> BTreeMap<String, u32> {
-    let clipped: Vec<(String, i32)> = input
+    let clipped: Vec<(String, u32)> = input
         .into_iter()
-        .map(|(key, value)| (key, value.max(0)))
+        .map(|(key, value)| (key, value.max(0) as u32))
         .collect();
-    let sum: i32 = clipped.iter().map(|(_, value)| *value).sum();
+    let sum: u32 = clipped.iter().map(|(_, value)| *value).sum();
 
-    if sum <= 0 {
+    if sum == 0 {
         return BTreeMap::new();
     }
 
-    let mut normalized = BTreeMap::new();
-    let mut running_total = 0u32;
-    let len = clipped.len();
+    let mut rows: Vec<(String, u32, f64)> = clipped
+        .into_iter()
+        .map(|(key, value)| {
+            let exact = (value as f64 / sum as f64) * 100.0;
+            (key, exact.floor() as u32, exact.fract())
+        })
+        .collect();
 
-    for (idx, (key, value)) in clipped.into_iter().enumerate() {
-        let pct = if idx + 1 == len {
-            100 - running_total
-        } else {
-            ((value as f64 / sum as f64) * 100.0).round() as u32
-        };
-        running_total += pct;
+    let mut remainder = 100u32 - rows.iter().map(|(_, pct, _)| *pct).sum::<u32>();
+    rows.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    for (_, pct, _) in &mut rows {
+        if remainder == 0 {
+            break;
+        }
+        *pct += 1;
+        remainder -= 1;
+    }
+
+    let mut normalized = BTreeMap::new();
+    for (key, pct, _) in rows {
         normalized.insert(key, pct);
     }
 

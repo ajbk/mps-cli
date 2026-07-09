@@ -1,10 +1,29 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MovementExperience {
     ShoulderFreedom,
     HappyHips,
     SpineReset,
+}
+
+impl MovementExperience {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ShoulderFreedom => "Shoulder Freedom",
+            Self::HappyHips => "Happy Hips",
+            Self::SpineReset => "Spine Reset",
+        }
+    }
+
+    pub fn db_id(self) -> &'static str {
+        match self {
+            Self::ShoulderFreedom => "shoulder_freedom",
+            Self::HappyHips => "happy_hips",
+            Self::SpineReset => "spine_reset",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -16,6 +35,20 @@ pub enum MovementSystem {
     Legs,
     Balance,
     Thoracic,
+}
+
+impl MovementSystem {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::BreathCore => "Breath/Core",
+            Self::Spine => "Spine",
+            Self::Shoulder => "Shoulder",
+            Self::Hip => "Hip",
+            Self::Legs => "Legs",
+            Self::Balance => "Balance",
+            Self::Thoracic => "Thoracic",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -37,6 +70,16 @@ impl ClassLevel {
             Self::Advanced => 5,
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Beginner => "Beginner",
+            Self::BeginnerIntermediate => "Beginner Intermediate",
+            Self::Intermediate => "Intermediate",
+            Self::IntermediateAdvanced => "Intermediate Advanced",
+            Self::Advanced => "Advanced",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -45,6 +88,41 @@ pub enum Equipment {
     Chair,
     Mat,
     Standing,
+}
+
+impl Equipment {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Reformer => "Reformer",
+            Self::Chair => "Chair",
+            Self::Mat => "Mat",
+            Self::Standing => "Standing",
+        }
+    }
+
+    pub fn db_id(self) -> &'static str {
+        match self {
+            Self::Reformer => "reformer",
+            Self::Chair => "chair",
+            Self::Mat => "mat",
+            Self::Standing => "standing",
+        }
+    }
+
+    pub fn category(self) -> EquipmentCategory {
+        match self {
+            Self::Reformer | Self::Chair => EquipmentCategory::Apparatus,
+            Self::Mat | Self::Standing => EquipmentCategory::MovementContext,
+        }
+    }
+
+    pub fn is_primary_apparatus(self) -> bool {
+        self.category() == EquipmentCategory::Apparatus
+    }
+
+    pub fn is_movement_context(self) -> bool {
+        self.category() == EquipmentCategory::MovementContext
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -74,6 +152,18 @@ impl MovementJourneyPhase {
             Self::Challenge => "CHALLENGE",
             Self::Transfer => "TRANSFER",
             Self::ResetRetest => "RESET & RETEST",
+        }
+    }
+
+    pub fn purpose(self) -> &'static str {
+        match self {
+            Self::Arrive => "Assess baseline, settle attention, and name the class target.",
+            Self::Prepare => "Prepare breath, joints, and control for the main intervention.",
+            Self::Build => "Apply the main Prime exercises that create the target change.",
+            Self::Integrate => "Connect the target system with whole-body coordination.",
+            Self::Challenge => "Add the planned 20 percent challenge without losing quality.",
+            Self::Transfer => "Carry the new movement quality into functional patterns.",
+            Self::ResetRetest => "Downshift effort and repeat the benchmark for felt comparison.",
         }
     }
 }
@@ -112,6 +202,24 @@ pub enum ChallengeType {
     Range,
     Load,
     Tempo,
+}
+
+impl fmt::Display for MovementExperience {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+impl fmt::Display for ClassLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+impl fmt::Display for Equipment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
 }
 
 #[cfg(test)]

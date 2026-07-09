@@ -2,53 +2,31 @@
 
 Date: 2026-07-09
 
-## Review Findings
+## Completed Clean Rebuild
 
-1. The Rust generator scored selected equipment but did not strictly filter
-   unselected primary apparatus. This could produce a class using Reformer when
-   the request asked for Chair only.
-2. The web engine filtered only selected equipment, which could remove Mat and
-   Standing context work from ARRIVE, TRANSFER, and RESET & RETEST.
-3. There was no README quickstart, making the project harder to hand off.
-4. SQLite-backed generation had repository tests, but no direct integration test
-   proving a seeded database can generate a plan while respecting equipment.
-5. `mps-db` emitted warnings from row fields selected but never read.
+- Rebuilt `mps-core` around explicit validation, scoring, equipment rules,
+  safety handling, and journey validation.
+- Rebuilt `mps-cli` with strict format parsing and optional `--output`.
+- Rebuilt SQLite seed data as clean ASCII with explicit movement systems and
+  movement experience tags.
+- Rebuilt `web/seed-data.js` and `web/mps-engine.js` as a clean browser-side
+  port of the deterministic rules.
+- Replaced stale/mojibake agent handoff docs.
 
-## Pass 1 Plan
+## Current Quality Gates
 
-- Enforce selected primary apparatus in `mps-core`.
-- Preserve Mat and Standing only for context phases.
-- Mirror the same equipment rule in `web/mps-engine.js`.
-- Add core tests for selected apparatus and movement context behavior.
-- Add a SQLite seed integration test for real generation.
-- Remove warning-producing unused row fields.
-- Add README, flashcards, and this improvement plan.
+- `cargo test -q` passes.
+- `node --check web\seed-data.js`, `web\mps-engine.js`, and `web\app.js` pass.
+- CLI smoke with a fresh SQLite database passes.
+- Web jsdom smoke passes.
 
 ## Next Backlog
 
-1. Add a web/Rust parity check that compares generated plans for the same seed
-   request.
-2. Add CLI `--output` support so generated plans can be written directly to a
-   file.
-3. Pre-generate static JSON plans for common combinations and serve them in the
-   web app.
-4. Add GitHub Actions for `cargo test` on every push.
-5. Add CI deployment to Vercel after tests pass.
-6. Expand seed data beyond 24 exercises and add coverage targets per movement
-   experience, level, and equipment.
-7. Add data validation tests that detect exercises without roles, objectives, or
-   teaching cues.
-8. Add snapshot tests for markdown output so instructor-facing formatting stays
-   stable.
-9. Add structured warnings when a phase is underfilled by more than a threshold.
-10. Consider replacing per-method `Runtime::block_on()` with an async repository
-    boundary if the app grows beyond CLI/static use.
-
-## Quality Gates
-
-- `cargo test` passes.
-- No compiler warnings from touched Rust crates.
-- Chair-only requests never include Reformer exercises.
-- Reformer-only requests never include Chair exercises.
-- Mat and Standing appear only in context phases.
-- BUILD fails loudly if no Prime exercise can be selected.
+1. Generate `web/seed-data.js` from the same source as SQLite seed data.
+2. Add CI for Rust tests and JS syntax checks.
+3. Add markdown snapshot tests.
+4. Add data validation tests for missing roles, objectives, cues, systems, and
+   experience tags.
+5. Expand exercise metadata beyond the MVP 24 exercises.
+6. Add visual browser smoke tests before Vercel deploys.
+7. Add production deploy automation after CI passes.

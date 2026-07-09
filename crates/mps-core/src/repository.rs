@@ -30,6 +30,8 @@ pub struct ExerciseRecord {
     pub description: String,
     pub equipment: Equipment,
     pub roles: Vec<ExerciseRole>,
+    pub movement_systems: Vec<MovementSystem>,
+    pub experience_tags: Vec<MovementExperience>,
     pub objectives: Vec<String>,
     pub min_level: ClassLevel,
     pub max_level: ClassLevel,
