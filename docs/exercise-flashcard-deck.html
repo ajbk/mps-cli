@@ -222,6 +222,12 @@
             background-position: 100% 100%;
         }
 
+        .card-art.has-image {
+            background-color: #ffffff;
+            background-position: center;
+            background-size: contain;
+        }
+
         .card-title {
             min-width: 0;
         }
@@ -469,6 +475,10 @@
             return node.innerHTML;
         }
 
+        function safeAssetUrl(value) {
+            return String(value || '').replace(/["'()\\\n\r\f]/g, '');
+        }
+
         function fillLevels(cards) {
             const levels = [...new Set(cards.map((card) => card.level))].sort((a, b) => {
                 return (levelRank[a] || 99) - (levelRank[b] || 99) || a.localeCompare(b);
@@ -497,6 +507,8 @@
 
         function renderCard(card) {
             const slug = categoryClass[card.category];
+            const artClass = card.image ? 'card-art has-image' : 'card-art';
+            const artStyle = card.image ? ` style="background-image: url('${safeAssetUrl(card.image)}')"` : '';
             const detailRows = [
                 ['Level', card.level],
                 ['Objective', card.objective],
@@ -508,7 +520,7 @@
             return `
                 <article class="flashcard category-${slug} accent-${slug}">
                     <header class="card-top">
-                        <div class="card-art" aria-hidden="true"></div>
+                        <div class="${artClass}"${artStyle} aria-hidden="true"></div>
                         <div class="card-title">
                             <strong>${escapeHtml(card.name)}</strong>
                             <span>${escapeHtml(card.category)}</span>

@@ -797,6 +797,12 @@ td {
     background-position: 100% 100%;
 }
 
+.flashcard-art.has-image {
+    background-color: #ffffff;
+    background-position: center;
+    background-size: contain;
+}
+
 .flashcard-front {
     padding: 14px;
     border-bottom: 1px solid var(--line);

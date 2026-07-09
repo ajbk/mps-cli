@@ -163,6 +163,10 @@ function nl(value) {
     return escapeHtml(value || '').replace(/\n/g, '<br>');
 }
 
+function safeAssetUrl(value) {
+    return String(value || '').replace(/["'()\\\n\r\f]/g, '');
+}
+
 function value(id) {
     return $(`#${id}`).value;
 }
@@ -824,6 +828,8 @@ function renderFlashcards() {
 
 function renderFlashcard(card) {
     const slug = card.category.toLowerCase();
+    const artClass = card.image ? 'flashcard-art has-image' : 'flashcard-art';
+    const artStyle = card.image ? ` style="background-image: url('${safeAssetUrl(card.image)}')"` : '';
     const rows = [
         ['Level', card.level],
         ['Objective', card.objective],
@@ -836,7 +842,7 @@ function renderFlashcard(card) {
     return `
         <article class="studio-flashcard flashcard-${slug}">
             <header class="flashcard-head">
-                <div class="flashcard-art" aria-hidden="true"></div>
+                <div class="${artClass}"${artStyle} aria-hidden="true"></div>
                 <div>
                     <strong>${escapeHtml(card.name)}</strong>
                     <span>${escapeHtml(card.category)} / ${escapeHtml(card.id)}</span>
