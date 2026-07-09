@@ -264,7 +264,15 @@
     <script>
         // Chip toggle
         document.querySelectorAll('.chip').forEach(chip => {
-            chip.addEventListener('click', () => chip.classList.toggle('active'));
+            const cb = chip.querySelector('input[type="checkbox"]');
+            // Sync initial state
+            if (cb && cb.checked) chip.classList.add('active');
+            chip.addEventListener('click', (e) => {
+                // Let the label naturally toggle the checkbox, then sync class
+                setTimeout(() => {
+                    chip.classList.toggle('active', cb.checked);
+                }, 0);
+            });
         });
 
         let currentPlan = null;
@@ -281,7 +289,7 @@
                         students: parseInt(document.getElementById('students').value),
                         movement_experience: document.getElementById('experience').value,
                         level: document.getElementById('level').value,
-                        equipment: Array.from(document.querySelectorAll('#equipment .chip.active input')).map(i => i.value),
+                        equipment: Array.from(document.querySelectorAll('#equipment input[type="checkbox"]:checked')).map(i => i.value),
                         duration_minutes: parseInt(document.getElementById('duration').value),
                         observations: document.getElementById('observations').value.split(',').map(s => s.trim()).filter(Boolean),
                         group_safety: {
