@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MPS Pilates Flashcard Deck</title>
+    <style>
+        :root {
+            --page: #f6f8f7;
+            --surface: #ffffff;
+            --surface-alt: #eef4f2;
+            --ink: #17201d;
+            --muted: #5f6f68;
+            --line: #d4ded9;
+            --teal: #217c72;
+            --teal-dark: #155d55;
+            --coral: #c86553;
+            --sage: #6f8d65;
+            --gold: #b7862f;
+            --blue: #466a92;
+            --shadow: 0 14px 34px rgba(24, 37, 33, 0.10);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: var(--page);
+            color: var(--ink);
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            letter-spacing: 0;
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        .deck-shell {
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: auto 1fr;
+        }
+
+        .toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            display: grid;
+            grid-template-columns: minmax(220px, 1fr) auto;
+            gap: 16px;
+            align-items: center;
+            padding: 14px 18px;
+            background: rgba(255, 255, 255, 0.94);
+            border-bottom: 1px solid var(--line);
+            backdrop-filter: blur(10px);
+        }
+
+        .title-block h1 {
+            margin: 0 0 3px;
+            font-size: 22px;
+            line-height: 1.15;
+        }
+
+        .title-block p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .field {
+            display: grid;
+            gap: 4px;
+        }
+
+        .field span {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        input,
+        select,
+        button {
+            min-height: 38px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--ink);
+            padding: 0 11px;
+            outline: none;
+        }
+
+        input {
+            width: min(280px, 42vw);
+        }
+
+        input:focus,
+        select:focus,
+        button:focus-visible {
+            border-color: var(--teal);
+            box-shadow: 0 0 0 4px rgba(33, 124, 114, 0.16);
+        }
+
+        button.primary {
+            border-color: var(--teal);
+            color: #ffffff;
+            background: var(--teal);
+            font-weight: 800;
+        }
+
+        button.primary:hover {
+            background: var(--teal-dark);
+        }
+
+        .category-tabs {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+            padding: 14px 18px 0;
+        }
+
+        .category-tabs button {
+            font-weight: 800;
+            color: var(--muted);
+            background: var(--surface);
+        }
+
+        .category-tabs button.active {
+            border-color: var(--teal);
+            color: var(--teal-dark);
+            background: var(--surface-alt);
+        }
+
+        .deck-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            padding: 12px 18px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: var(--surface-alt);
+            color: var(--teal-dark);
+            font-weight: 800;
+        }
+
+        .deck {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 14px;
+            padding: 0 18px 28px;
+        }
+
+        .flashcard {
+            min-height: 420px;
+            display: grid;
+            grid-template-rows: auto auto 1fr;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--surface);
+            box-shadow: var(--shadow);
+        }
+
+        .card-top {
+            display: grid;
+            grid-template-columns: 72px minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: center;
+            padding: 12px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .card-art {
+            width: 72px;
+            height: 72px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background-image: url("assets/pilates-flashcard-cartoon.png");
+            background-size: 200% 200%;
+            background-repeat: no-repeat;
+            background-color: #f3f6f2;
+        }
+
+        .category-reformer .card-art {
+            background-position: 0 0;
+        }
+
+        .category-mat .card-art {
+            background-position: 100% 0;
+        }
+
+        .category-stand .card-art {
+            background-position: 0 100%;
+        }
+
+        .category-chair .card-art {
+            background-position: 100% 100%;
+        }
+
+        .card-title {
+            min-width: 0;
+        }
+
+        .card-title strong {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 16px;
+            line-height: 1.2;
+        }
+
+        .card-title span,
+        .card-id {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .card-id {
+            padding: 5px 8px;
+            border-radius: 999px;
+            background: var(--surface-alt);
+        }
+
+        .front {
+            padding: 14px 14px 10px;
+            border-bottom: 1px solid var(--line);
+            background: linear-gradient(180deg, #ffffff, #f7fbfa);
+        }
+
+        .front small,
+        .back small {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 900;
+            text-transform: uppercase;
+        }
+
+        .front p {
+            margin: 0;
+            font-size: 18px;
+            line-height: 1.35;
+            font-weight: 850;
+        }
+
+        .back {
+            display: grid;
+            gap: 8px;
+            align-content: start;
+            padding: 14px;
+        }
+
+        .detail {
+            display: grid;
+            grid-template-columns: 74px minmax(0, 1fr);
+            gap: 8px;
+            align-items: start;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #edf2ef;
+            font-size: 13px;
+            line-height: 1.42;
+        }
+
+        .detail:last-child {
+            padding-bottom: 0;
+            border-bottom: 0;
+        }
+
+        .detail b {
+            color: var(--muted);
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+
+        .accent-reformer {
+            border-top: 5px solid var(--teal);
+        }
+
+        .accent-mat {
+            border-top: 5px solid var(--coral);
+        }
+
+        .accent-stand {
+            border-top: 5px solid var(--sage);
+        }
+
+        .accent-chair {
+            border-top: 5px solid var(--gold);
+        }
+
+        .empty {
+            grid-column: 1 / -1;
+            padding: 38px 18px;
+            border: 1px dashed var(--line);
+            border-radius: 8px;
+            color: var(--muted);
+            text-align: center;
+            background: var(--surface);
+        }
+
+        .error {
+            color: #943f31;
+        }
+
+        @media (max-width: 820px) {
+            .toolbar {
+                grid-template-columns: 1fr;
+            }
+
+            .controls {
+                justify-content: flex-start;
+            }
+
+            input {
+                width: 100%;
+            }
+
+            .category-tabs {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 520px) {
+            .toolbar,
+            .category-tabs,
+            .deck-meta,
+            .deck {
+                padding-left: 12px;
+                padding-right: 12px;
+            }
+
+            .deck {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media print {
+            body {
+                background: #ffffff;
+            }
+
+            .toolbar,
+            .category-tabs,
+            .deck-meta {
+                display: none !important;
+            }
+
+            .deck {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8mm;
+                padding: 0;
+            }
+
+            .flashcard {
+                min-height: 126mm;
+                box-shadow: none;
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="deck-shell">
+        <header class="toolbar">
+            <div class="title-block">
+                <h1>MPS Pilates Flashcard Deck</h1>
+                <p>Reformer, Mat, Stand / Standing, Chair</p>
+            </div>
+            <div class="controls" aria-label="Deck controls">
+                <label class="field">
+                    <span>Search</span>
+                    <input id="search" type="search" placeholder="exercise, cue, objective">
+                </label>
+                <label class="field">
+                    <span>Level</span>
+                    <select id="level">
+                        <option value="all">All levels</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>Sort</span>
+                    <select id="sort">
+                        <option value="id">ID</option>
+                        <option value="level">Level</option>
+                        <option value="name">Name</option>
+                    </select>
+                </label>
+                <button class="primary" id="print" type="button">Print</button>
+            </div>
+        </header>
+
+        <nav class="category-tabs" aria-label="Category filter">
+            <button class="active" type="button" data-category="all">All</button>
+            <button type="button" data-category="Reformer">Reformer</button>
+            <button type="button" data-category="Mat">Mat</button>
+            <button type="button" data-category="Stand">Stand</button>
+            <button type="button" data-category="Chair">Chair</button>
+        </nav>
+
+        <section class="deck-meta" aria-live="polite">
+            <span class="pill" id="count">0 cards</span>
+            <span id="source">Source: EXERCISE_FLASHCARDS.md</span>
+        </section>
+
+        <main class="deck" id="deck" aria-live="polite"></main>
+    </div>
+
+    <script src="flashcards-data.js"></script>
+    <script>
+        const categoryClass = {
+            Reformer: 'reformer',
+            Mat: 'mat',
+            Stand: 'stand',
+            Chair: 'chair'
+        };
+
+        const levelRank = {
+            Beginner: 1,
+            'Beginner Intermediate': 2,
+            Intermediate: 3,
+            'Intermediate Advanced': 4,
+            Advanced: 5,
+            All: 6
+        };
+
+        const state = {
+            cards: [],
+            category: 'all',
+            query: '',
+            level: 'all',
+            sort: 'id'
+        };
+
+        const $ = (selector) => document.querySelector(selector);
+        const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+        function escapeHtml(value) {
+            const node = document.createElement('div');
+            node.textContent = String(value ?? '');
+            return node.innerHTML;
+        }
+
+        function fillLevels(cards) {
+            const levels = [...new Set(cards.map((card) => card.level))].sort((a, b) => {
+                return (levelRank[a] || 99) - (levelRank[b] || 99) || a.localeCompare(b);
+            });
+            $('#level').innerHTML = '<option value="all">All levels</option>' + levels
+                .map((level) => `<option value="${escapeHtml(level)}">${escapeHtml(level)}</option>`)
+                .join('');
+        }
+
+        function filteredCards() {
+            const query = state.query.trim().toLowerCase();
+            const cards = state.cards.filter((card) => {
+                if (state.category !== 'all' && card.category !== state.category) return false;
+                if (state.level !== 'all' && card.level !== state.level) return false;
+                if (query && !card.search.includes(query)) return false;
+                return true;
+            });
+            return cards.sort((a, b) => {
+                if (state.sort === 'level') {
+                    return (levelRank[a.level] || 99) - (levelRank[b.level] || 99) || a.id.localeCompare(b.id);
+                }
+                if (state.sort === 'name') return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+                return a.id.localeCompare(b.id);
+            });
+        }
+
+        function renderCard(card) {
+            const slug = categoryClass[card.category];
+            const detailRows = [
+                ['Level', card.level],
+                ['Objective', card.objective],
+                ['Principle', card.principle],
+                ['Cue', card.cue],
+                ['Regress', card.regress],
+                ['Progress', card.progress]
+            ];
+            return `
+                <article class="flashcard category-${slug} accent-${slug}">
+                    <header class="card-top">
+                        <div class="card-art" aria-hidden="true"></div>
+                        <div class="card-title">
+                            <strong>${escapeHtml(card.name)}</strong>
+                            <span>${escapeHtml(card.category)}</span>
+                        </div>
+                        <span class="card-id">${escapeHtml(card.id)}</span>
+                    </header>
+                    <section class="front">
+                        <small>Front</small>
+                        <p>${escapeHtml(card.front)}</p>
+                    </section>
+                    <section class="back">
+                        <small>Back</small>
+                        ${detailRows.map(([label, value]) => `
+                            <div class="detail">
+                                <b>${escapeHtml(label)}</b>
+                                <span>${escapeHtml(value || '-')}</span>
+                            </div>
+                        `).join('')}
+                    </section>
+                </article>
+            `;
+        }
+
+        function render() {
+            const cards = filteredCards();
+            $('#count').textContent = `${cards.length} card${cards.length === 1 ? '' : 's'}`;
+            $('#deck').innerHTML = cards.length
+                ? cards.map(renderCard).join('')
+                : '<div class="empty">No cards match the current filters.</div>';
+        }
+
+        function updateCategoryHash(category) {
+            try {
+                const base = location.href.split('#')[0];
+                history.replaceState(null, '', category === 'all' ? base : `${base}#${category}`);
+            } catch (error) {
+                // Some local file viewers do not allow history mutation.
+            }
+        }
+
+        function setCategory(category) {
+            state.category = category;
+            $$('.category-tabs button').forEach((tab) => {
+                tab.classList.toggle('active', tab.dataset.category === category);
+            });
+            updateCategoryHash(category);
+            render();
+        }
+
+        function attachEvents() {
+            $('#search').addEventListener('input', (event) => {
+                state.query = event.target.value;
+                render();
+            });
+            $('#level').addEventListener('change', (event) => {
+                state.level = event.target.value;
+                render();
+            });
+            $('#sort').addEventListener('change', (event) => {
+                state.sort = event.target.value;
+                render();
+            });
+            $('#print').addEventListener('click', () => window.print());
+            $$('.category-tabs button').forEach((button) => {
+                button.addEventListener('click', () => {
+                    setCategory(button.dataset.category);
+                });
+            });
+        }
+
+        function loadDeck() {
+            state.cards = Array.isArray(window.MPS_FLASHCARDS) ? window.MPS_FLASHCARDS : [];
+            if (!state.cards.length) {
+                $('#count').textContent = 'Deck unavailable';
+                $('#deck').innerHTML = '<div class="empty error">Unable to load flashcards-data.js from this location.</div>';
+                return;
+            }
+            fillLevels(state.cards);
+            const hashCategory = decodeURIComponent(location.hash.replace('#', ''));
+            const initialCategory = ['Reformer', 'Mat', 'Stand', 'Chair'].includes(hashCategory) ? hashCategory : 'all';
+            setCategory(initialCategory);
+        }
+
+        attachEvents();
+        loadDeck();
+    </script>
+</body>
+</html>

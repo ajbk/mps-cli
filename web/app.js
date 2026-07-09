@@ -94,10 +94,24 @@ const experienceLabels = {
     SpineReset: 'Spine Reset'
 };
 
+const flashcardCategories = ['Reformer', 'Mat', 'Stand', 'Chair'];
+
+const flashcardLevelRank = {
+    Beginner: 1,
+    'Beginner Intermediate': 2,
+    Intermediate: 3,
+    'Intermediate Advanced': 4,
+    Advanced: 5,
+    All: 6
+};
+
 const state = {
     activeView: 'dashboard',
     selectedStudentId: null,
     planView: 'plan',
+    flashcardCategory: 'Reformer',
+    flashcardQuery: '',
+    flashcardLevel: 'all',
     plan: null,
     markdown: '',
     data: loadData()
@@ -211,6 +225,17 @@ function setupStaticControls() {
         .map((item) => `<label class="check"><input class="red-check" type="checkbox" value="${escapeHtml(item)}"><span>${escapeHtml(item)}</span></label>`)
         .join('');
     $('#l_playbook').innerHTML = playbooks.map((item) => `<option>${escapeHtml(item.name)}</option>`).join('');
+    setupFlashcardControls();
+}
+
+function setupFlashcardControls() {
+    const cards = flashcards();
+    const levels = [...new Set(cards.map((card) => card.level))].sort((a, b) => {
+        return (flashcardLevelRank[a] || 99) - (flashcardLevelRank[b] || 99) || a.localeCompare(b);
+    });
+    $('#flashcard-level').innerHTML = '<option value="all">All levels</option>' + levels
+        .map((level) => `<option value="${escapeHtml(level)}">${escapeHtml(level)}</option>`)
+        .join('');
 }
 
 function renderAll() {
@@ -225,6 +250,7 @@ function renderAll() {
     renderPlaybook();
     renderThemeTable();
     renderReport();
+    renderFlashcards();
     syncChecks();
     refreshIcons();
 }
@@ -761,6 +787,77 @@ Teacher Note:
 This report summarizes movement observations for Pilates programming and progress tracking. It is not a medical diagnosis.`;
 }
 
+function flashcards() {
+    return Array.isArray(window.MPS_FLASHCARDS) ? window.MPS_FLASHCARDS : [];
+}
+
+function filteredFlashcards() {
+    const query = state.flashcardQuery.trim().toLowerCase();
+    return flashcards()
+        .filter((card) => card.category === state.flashcardCategory)
+        .filter((card) => state.flashcardLevel === 'all' || card.level === state.flashcardLevel)
+        .filter((card) => !query || card.search.includes(query))
+        .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function renderFlashcards() {
+    const cards = flashcards();
+    $('#flashcard-metrics').innerHTML = flashcardCategories.map((category) => {
+        const count = cards.filter((card) => card.category === category).length;
+        return `
+            <button class="metric-card flashcard-metric ${category === state.flashcardCategory ? 'active' : ''}" type="button" data-flashcard-category="${escapeHtml(category)}">
+                <strong class="metric">${count}</strong>
+                <span>${escapeHtml(category)}</span>
+            </button>
+        `;
+    }).join('');
+
+    $$('.flashcard-tabs button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.flashcardCategory === state.flashcardCategory);
+    });
+
+    const filtered = filteredFlashcards();
+    $('#flashcard-deck').innerHTML = filtered.length
+        ? filtered.map(renderFlashcard).join('')
+        : '<p class="muted">No flashcards match the current filters.</p>';
+}
+
+function renderFlashcard(card) {
+    const slug = card.category.toLowerCase();
+    const rows = [
+        ['Level', card.level],
+        ['Objective', card.objective],
+        ['Principle', card.principle],
+        ['Cue', card.cue],
+        ['Regress', card.regress],
+        ['Progress', card.progress]
+    ];
+
+    return `
+        <article class="studio-flashcard flashcard-${slug}">
+            <header class="flashcard-head">
+                <div class="flashcard-art" aria-hidden="true"></div>
+                <div>
+                    <strong>${escapeHtml(card.name)}</strong>
+                    <span>${escapeHtml(card.category)} / ${escapeHtml(card.id)}</span>
+                </div>
+            </header>
+            <section class="flashcard-front">
+                <span class="muted">Front</span>
+                <p>${escapeHtml(card.front)}</p>
+            </section>
+            <section class="flashcard-back">
+                ${rows.map(([label, value]) => `
+                    <div>
+                        <b>${escapeHtml(label)}</b>
+                        <span>${escapeHtml(value || '-')}</span>
+                    </div>
+                `).join('')}
+            </section>
+        </article>
+    `;
+}
+
 function exportData() {
     const blob = new Blob([JSON.stringify(state.data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -965,6 +1062,22 @@ function attachEvents() {
     $('#save-session').addEventListener('click', saveSession);
     $('#copy-report').addEventListener('click', copyReport);
     $('#print-report').addEventListener('click', () => window.print());
+    $('#print-flashcards').addEventListener('click', () => window.print());
+    $('#flashcard-search').addEventListener('input', (event) => {
+        state.flashcardQuery = event.target.value;
+        renderFlashcards();
+    });
+    $('#flashcard-level').addEventListener('change', (event) => {
+        state.flashcardLevel = event.target.value;
+        renderFlashcards();
+    });
+
+    document.body.addEventListener('click', (event) => {
+        const categoryTarget = event.target.closest('[data-flashcard-category]');
+        if (!categoryTarget) return;
+        state.flashcardCategory = categoryTarget.dataset.flashcardCategory;
+        renderFlashcards();
+    });
 
     ['assessment-student', 'session-student', 'progress-student', 'playbook-student', 'report-student'].forEach((id) => {
         $(`#${id}`).addEventListener('change', (event) => {

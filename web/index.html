@@ -21,6 +21,7 @@
                 <button type="button" data-view="session">Session Log</button>
                 <button type="button" data-view="progress">Progress</button>
                 <button type="button" data-view="playbook">Playbook Link</button>
+                <button type="button" data-view="flashcards">Flashcards</button>
                 <button type="button" data-view="report">Student Report</button>
             </nav>
 
@@ -378,12 +379,41 @@
                     <pre id="student-report" class="print-area"></pre>
                 </article>
             </section>
+
+            <section id="flashcards" class="view hidden">
+                <div class="topbar">
+                    <div>
+                        <h2>Flashcards</h2>
+                        <p>Exercise teaching cards grouped by Reformer, Mat, Stand, and Chair.</p>
+                    </div>
+                    <div class="actions">
+                        <input id="flashcard-search" type="search" placeholder="Search card, cue, objective">
+                        <select id="flashcard-level"></select>
+                        <button class="ghost" id="print-flashcards" type="button">
+                            <i data-lucide="printer" aria-hidden="true"></i>
+                            <span>Print</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="summary-grid" id="flashcard-metrics"></div>
+
+                <nav class="view-tabs flashcard-tabs" aria-label="Flashcard categories">
+                    <button class="tab-button active" type="button" data-flashcard-category="Reformer">Reformer</button>
+                    <button class="tab-button" type="button" data-flashcard-category="Mat">Mat</button>
+                    <button class="tab-button" type="button" data-flashcard-category="Stand">Stand</button>
+                    <button class="tab-button" type="button" data-flashcard-category="Chair">Chair</button>
+                </nav>
+
+                <div id="flashcard-deck" class="flashcard-deck"></div>
+            </section>
         </main>
     </div>
 
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="seed-data.js"></script>
     <script src="mps-engine.js"></script>
+    <script src="flashcards-data.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

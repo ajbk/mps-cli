@@ -700,6 +700,144 @@ td {
     line-height: 1.45;
 }
 
+.flashcard-tabs {
+    justify-content: flex-start;
+    margin-bottom: 16px;
+}
+
+.flashcard-metric {
+    cursor: pointer;
+    text-align: left;
+}
+
+.flashcard-metric.active {
+    border-color: var(--accent);
+    background: #fbf2e7;
+}
+
+.flashcard-deck {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+}
+
+.studio-flashcard {
+    min-height: 420px;
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+}
+
+.studio-flashcard.flashcard-reformer {
+    border-top: 5px solid var(--accent);
+}
+
+.studio-flashcard.flashcard-mat {
+    border-top: 5px solid var(--danger);
+}
+
+.studio-flashcard.flashcard-stand {
+    border-top: 5px solid var(--good);
+}
+
+.studio-flashcard.flashcard-chair {
+    border-top: 5px solid var(--info);
+}
+
+.flashcard-head {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid var(--line);
+}
+
+.flashcard-head strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 16px;
+    line-height: 1.2;
+}
+
+.flashcard-head span {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.flashcard-art {
+    width: 72px;
+    height: 72px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background-image: url("assets/pilates-flashcard-cartoon.png");
+    background-size: 200% 200%;
+    background-repeat: no-repeat;
+    background-color: var(--field);
+}
+
+.flashcard-reformer .flashcard-art {
+    background-position: 0 0;
+}
+
+.flashcard-mat .flashcard-art {
+    background-position: 100% 0;
+}
+
+.flashcard-stand .flashcard-art {
+    background-position: 0 100%;
+}
+
+.flashcard-chair .flashcard-art {
+    background-position: 100% 100%;
+}
+
+.flashcard-front {
+    padding: 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--field);
+}
+
+.flashcard-front p {
+    margin: 6px 0 0;
+    font-size: 17px;
+    font-weight: 850;
+    line-height: 1.35;
+}
+
+.flashcard-back {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    padding: 14px;
+}
+
+.flashcard-back div {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #ecdccb;
+    font-size: 13px;
+    line-height: 1.42;
+}
+
+.flashcard-back div:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.flashcard-back b {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
 .toast {
     position: fixed;
     right: 18px;
@@ -777,7 +915,8 @@ td {
     .check-grid,
     .check-grid.three,
     .benchmark-grid,
-    .strategy-grid {
+    .strategy-grid,
+    .flashcard-deck {
         grid-template-columns: 1fr;
     }
 }
@@ -805,7 +944,8 @@ td {
     .phase-head,
     .exercise-row,
     .bar-row,
-    .student-item {
+    .student-item,
+    .flashcard-back div {
         grid-template-columns: 1fr;
     }
 
@@ -839,7 +979,8 @@ td {
     .metric-card,
     .phase-block,
     .benchmark-item,
-    .safety-item {
+    .safety-item,
+    .studio-flashcard {
         box-shadow: none;
         break-inside: avoid;
     }
