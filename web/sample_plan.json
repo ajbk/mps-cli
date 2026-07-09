@@ -1,0 +1,371 @@
+{
+  "class_title": "ShoulderFreedom \u2014 60 min BeginnerIntermediate",
+  "movement_experience": "ShoulderFreedom",
+  "duration_minutes": 60,
+  "level": "BeginnerIntermediate",
+  "students": 4,
+  "equipment": [
+    "Reformer",
+    "Chair"
+  ],
+  "movement_strategy": {
+    "primary_focus": "Shoulder",
+    "secondary_focus": "Thoracic",
+    "emphasis": {
+      "BreathCore": 6,
+      "Hip": 13,
+      "Legs": 9,
+      "Shoulder": 38,
+      "Spine": 9,
+      "Thoracic": 25
+    },
+    "key_objectives": [
+      "Improve scapular stability",
+      "Increase overhead reach range",
+      "Release thoracic extension",
+      "Counteract forward-head and rounded-shoulder posture"
+    ],
+    "preferred_exercise_objectives": [
+      "Increase overhead reach range",
+      "Release thoracic extension"
+    ],
+    "explanation": "This session prioritises shoulder range and stability, with secondary attention to thoracic mobility to support overhead and reaching movements. Limited overhead reach observed \u2014 adding shoulder and thoracic extension work. Desk/office patterns observed \u2014 adding shoulder and thoracic counter-movements. Thoracic stiffness detected \u2014 increasing thoracic mobilisation work."
+  },
+  "benchmark": {
+    "assessments": [
+      {
+        "name": "Overhead Reach Test",
+        "instruction": "Stand tall and slowly reach both arms overhead. Observe how far the arms travel before the ribs flare or the lower back arches. Note symmetry between left and right.",
+        "what_to_watch": [
+          "Asymmetry between left and right arm path",
+          "Lower back arch compensation",
+          "Rib flare before arms reach vertical"
+        ]
+      },
+      {
+        "name": "Shoulder Rotation Check",
+        "instruction": "Stand with arms at 90 degrees of abduction, elbows bent to 90 degrees. Rotate the arms outward (external rotation) and inward (internal rotation). Observe range and quality of movement.",
+        "what_to_watch": [
+          "Limited external rotation compared to internal rotation",
+          "Pain or clicking during arc of motion",
+          "Shoulder hiking during rotation"
+        ]
+      }
+    ]
+  },
+  "journey": [
+    {
+      "phase": "Arrive",
+      "purpose": "Assess baseline and prepare the body",
+      "target_duration_minutes": 5,
+      "exercises": [
+        {
+          "exercise_id": "standing_roll_down",
+          "name": "Standing Roll Down",
+          "apparatus": "Mat",
+          "role": "Assess",
+          "duration_minutes": 4,
+          "movement_objectives": [
+            "Assess spinal segmental mobility",
+            "Mobilise the spine through flexion",
+            "Release tension in the posterior chain"
+          ],
+          "why_selected": "Score-based selection for Arrive phase",
+          "teaching_cues": [
+            "Nod the chin and let the head lead the descent",
+            "Bend the knees slightly if the hamstrings limit the movement",
+            "Roll up from the base of the spine \u2014 stack each vertebra"
+          ],
+          "regression": null,
+          "progression": "Close eyes or slow the tempo for proprioceptive challenge",
+          "safety_notes": []
+        },
+        {
+          "exercise_id": "arm_raise",
+          "name": "Arm Raise",
+          "apparatus": "Mat",
+          "role": "Assess",
+          "duration_minutes": 1,
+          "movement_objectives": [
+            "Assess overhead reach range",
+            "Activate shoulder stabilisers gently",
+            "Establish breath-arm coordination"
+          ],
+          "why_selected": "Score-based selection for Arrive phase",
+          "teaching_cues": [
+            "Inhale to float the arms up \u2014 exhale to lower",
+            "Keep the ribs knitted together \u2014 avoid arching the lower back",
+            "Reach through the fingertips \u2014 lengthen before you lift"
+          ],
+          "regression": null,
+          "progression": "Add light weights or slow the tempo",
+          "safety_notes": []
+        }
+      ]
+    },
+    {
+      "phase": "Prepare",
+      "purpose": "Warm up and mobilize target systems",
+      "target_duration_minutes": 10,
+      "exercises": [
+        {
+          "exercise_id": "footwork",
+          "name": "Footwork",
+          "apparatus": "Reformer",
+          "role": "Prepare",
+          "duration_minutes": 8,
+          "movement_objectives": [
+            "Activate glutes and hamstrings",
+            "Improve ankle and foot articulation",
+            "Establish lower-body alignment patterns"
+          ],
+          "why_selected": "Score-based selection for Prepare phase",
+          "teaching_cues": [
+            "Press through the whole foot \u2014 feel all ten toes",
+            "Keep the pelvis neutral as the carriage moves",
+            "Knees track over the second and third toes"
+          ],
+          "regression": null,
+          "progression": "Increase spring resistance or add single-leg variations",
+          "safety_notes": []
+        },
+        {
+          "exercise_id": "mermaid_reformer",
+          "name": "Mermaid",
+          "apparatus": "Reformer",
+          "role": "Prepare",
+          "duration_minutes": 2,
+          "movement_objectives": [
+            "Mobilise lateral spinal flexion",
+            "Open the side body and intercostals",
+            "Promote breath expansion into the side ribs"
+          ],
+          "why_selected": "Score-based selection for Prepare phase",
+          "teaching_cues": [
+            "Lengthen both sides of the waist \u2014 avoid collapsing into the bottom side",
+            "Press the carriage away from the shoulder, not the hand",
+            "Inhale to lengthen, exhale to deepen the side bend"
+          ],
+          "regression": null,
+          "progression": "Add arm variations or increase lateral range",
+          "safety_notes": []
+        }
+      ]
+    },
+    {
+      "phase": "Build",
+      "purpose": "Build strength and movement capacity",
+      "target_duration_minutes": 20,
+      "exercises": [
+        {
+          "exercise_id": "footwork",
+          "name": "Footwork",
+          "apparatus": "Reformer",
+          "role": "Prime",
+          "duration_minutes": 8,
+          "movement_objectives": [
+            "Activate glutes and hamstrings",
+            "Improve ankle and foot articulation",
+            "Establish lower-body alignment patterns"
+          ],
+          "why_selected": "Score-based selection for Build phase",
+          "teaching_cues": [
+            "Press through the whole foot \u2014 feel all ten toes",
+            "Keep the pelvis neutral as the carriage moves",
+            "Knees track over the second and third toes"
+          ],
+          "regression": null,
+          "progression": "Increase spring resistance or add single-leg variations",
+          "safety_notes": []
+        },
+        {
+          "exercise_id": "pelvic_curl",
+          "name": "Pelvic Curl",
+          "apparatus": "Reformer",
+          "role": "Prime",
+          "duration_minutes": 6,
+          "movement_objectives": [
+            "Mobilise spinal segments through articulation",
+            "Activate posterior chain",
+            "Improve breath coordination with movement"
+          ],
+          "why_selected": "Score-based selection for Build phase",
+          "teaching_cues": [
+            "Peel the spine off the mat one vertebra at a time",
+            "Exhale to roll up, inhale at the top, exhale to roll down",
+            "Press evenly through both feet \u2014 avoid dominance on one side"
+          ],
+          "regression": null,
+          "progression": "Add single-leg bridge or increase spring tension",
+          "safety_notes": []
+        },
+        {
+          "exercise_id": "feet_in_straps",
+          "name": "Feet in Straps",
+          "apparatus": "Reformer",
+          "role": "Prime",
+          "duration_minutes": 6,
+          "movement_objectives": [
+            "Increase hip range of motion in multiple planes",
+            "Challenge pelvic stability during dynamic leg movement"
+          ],
+          "why_selected": "Score-based selection for Build phase",
+          "teaching_cues": [
+            "Keep the pelvis anchored to the mat as the legs move",
+            "Move from the hip joint \u2014 avoid gripping the lower back",
+            "Maintain even spring tension \u2014 control the return"
+          ],
+          "regression": "Reduce strap range or use lighter springs",
+          "progression": "Increase range of motion or slow down the tempo",
+          "safety_notes": []
+        }
+      ]
+    },
+    {
+      "phase": "Integrate",
+      "purpose": "Connect movements across systems",
+      "target_duration_minutes": 10,
+      "exercises": [
+        {
+          "exercise_id": "mermaid_chair",
+          "name": "Mermaid on Chair",
+          "apparatus": "Chair",
+          "role": "Integrate",
+          "duration_minutes": 6,
+          "movement_objectives": [
+            "Mobilise lateral flexion of the spine",
+            "Integrate breath with side-body opening",
+            "Stabilise pelvis during lateral movement"
+          ],
+          "why_selected": "Score-based selection for Integrate phase",
+          "teaching_cues": [
+            "Sit evenly on both sit bones before you begin",
+            "Press the pedal with the shoulder, not the wrist"
+          ],
+          "regression": null,
+          "progression": "Add arm reaches or combine with rotation",
+          "safety_notes": []
+        },
+        {
+          "exercise_id": "feet_in_straps",
+          "name": "Feet in Straps",
+          "apparatus": "Reformer",
+          "role": "Integrate",
+          "duration_minutes": 4,
+          "movement_objectives": [
+            "Increase hip range of motion in multiple planes",
+            "Challenge pelvic stability during dynamic leg movement"
+          ],
+          "why_selected": "Score-based selection for Integrate phase",
+          "teaching_cues": [
+            "Keep the pelvis anchored to the mat as the legs move",
+            "Move from the hip joint \u2014 avoid gripping the lower back",
+            "Maintain even spring tension \u2014 control the return"
+          ],
+          "regression": "Reduce strap range or use lighter springs",
+          "progression": "Increase range of motion or slow down the tempo",
+          "safety_notes": []
+        }
+      ]
+    },
+    {
+      "phase": "Challenge",
+      "purpose": "Push 80% success / 20% challenge",
+      "target_duration_minutes": 8,
+      "exercises": [
+        {
+          "exercise_id": "seated_push_down",
+          "name": "Seated Push Down",
+          "apparatus": "Chair",
+          "role": "Challenge",
+          "duration_minutes": 6,
+          "movement_objectives": [
+            "Build overhead pressing strength",
+            "Challenge seated postural control under load",
+            "Improve scapular upward rotation"
+          ],
+          "why_selected": "Score-based selection for Challenge phase",
+          "teaching_cues": [
+            "Sit tall \u2014 lengthen the spine before pressing",
+            "Press straight down \u2014 avoid leaning forward"
+          ],
+          "regression": "Use lighter pedal resistance",
+          "progression": "Add single-arm press or overhead reach at top",
+          "safety_notes": []
+        }
+      ]
+    },
+    {
+      "phase": "Transfer",
+      "purpose": "Transfer to functional movement",
+      "target_duration_minutes": 4,
+      "exercises": []
+    },
+    {
+      "phase": "ResetRetest",
+      "purpose": "Retest and confirm improvement",
+      "target_duration_minutes": 3,
+      "exercises": [
+        {
+          "exercise_id": "mermaid_reformer",
+          "name": "Mermaid",
+          "apparatus": "Reformer",
+          "role": "Restore",
+          "duration_minutes": 3,
+          "movement_objectives": [
+            "Mobilise lateral spinal flexion",
+            "Open the side body and intercostals",
+            "Promote breath expansion into the side ribs"
+          ],
+          "why_selected": "Score-based selection for ResetRetest phase",
+          "teaching_cues": [
+            "Lengthen both sides of the waist \u2014 avoid collapsing into the bottom side",
+            "Press the carriage away from the shoulder, not the hand",
+            "Inhale to lengthen, exhale to deepen the side bend"
+          ],
+          "regression": null,
+          "progression": "Add arm variations or increase lateral range",
+          "safety_notes": []
+        }
+      ]
+    }
+  ],
+  "safety_summary": {
+    "risk_policy": "Conservative",
+    "applied_contraindications": [
+      "wrist_pain"
+    ],
+    "excluded_exercises": [],
+    "modified_exercises": [],
+    "safety_notes": [
+      "Group safety policy: Conservative"
+    ]
+  },
+  "retest": {
+    "assessments": [
+      {
+        "name": "Overhead Reach Test",
+        "instruction": "Stand tall and slowly reach both arms overhead. Observe how far the arms travel before the ribs flare or the lower back arches. Note symmetry between left and right.",
+        "what_to_watch": [
+          "Asymmetry between left and right arm path",
+          "Lower back arch compensation",
+          "Rib flare before arms reach vertical"
+        ]
+      },
+      {
+        "name": "Shoulder Rotation Check",
+        "instruction": "Stand with arms at 90 degrees of abduction, elbows bent to 90 degrees. Rotate the arms outward (external rotation) and inward (internal rotation). Observe range and quality of movement.",
+        "what_to_watch": [
+          "Limited external rotation compared to internal rotation",
+          "Pain or clicking during arc of motion",
+          "Shoulder hiking during rotation"
+        ]
+      }
+    ],
+    "expected_improvement": "After this ShoulderFreedom class, expect improved movement quality in the target systems."
+  },
+  "expected_improvement": "Improved ShoulderFreedom movement quality after class.",
+  "warnings": [
+    "No exercises found for Transfer phase"
+  ]
+}
