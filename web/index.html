@@ -3,136 +3,385 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MPS - Pilates Class Plan Studio</title>
+    <title>MPS Client Studio</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="app-shell">
-        <header class="topbar">
-            <div>
-                <div class="brand-row">
-                    <span class="brand-mark">MPS</span>
-                    <span class="status-pill">Deterministic engine</span>
+    <div class="app">
+        <aside class="studio-sidebar" aria-label="Studio navigation">
+            <div class="brand">
+                <h1>MPS Client Studio</h1>
+                <p>Private Student Progress System</p>
+            </div>
+
+            <nav class="studio-nav">
+                <button class="active" type="button" data-view="dashboard">Dashboard</button>
+                <button type="button" data-view="students">Students</button>
+                <button type="button" data-view="assessment">Assessment</button>
+                <button type="button" data-view="session">Session Log</button>
+                <button type="button" data-view="progress">Progress</button>
+                <button type="button" data-view="playbook">Playbook Link</button>
+                <button type="button" data-view="report">Student Report</button>
+            </nav>
+
+            <div class="side-note">
+                <strong>Selected Student</strong>
+                <span id="sidebar-student">No student selected</span>
+                <span id="sidebar-next">Load demo data or create a student.</span>
+            </div>
+        </aside>
+
+        <main class="studio-main">
+            <section id="dashboard" class="view">
+                <div class="topbar">
+                    <div>
+                        <h2>Dashboard</h2>
+                        <p>Private student overview, caution signals, next plan, and recent session evidence.</p>
+                    </div>
+                    <div class="actions">
+                        <button id="load-demo" type="button">
+                            <i data-lucide="database" aria-hidden="true"></i>
+                            <span>Load Demo</span>
+                        </button>
+                        <button class="secondary" id="export-data" type="button">
+                            <i data-lucide="download" aria-hidden="true"></i>
+                            <span>Export JSON</span>
+                        </button>
+                        <button class="ghost" id="import-trigger" type="button">
+                            <i data-lucide="upload" aria-hidden="true"></i>
+                            <span>Import</span>
+                        </button>
+                        <input id="import-file" class="hidden" type="file" accept="application/json">
+                    </div>
                 </div>
-                <p class="subtitle">Pilates class plan studio for Total Body programming.</p>
-            </div>
-            <div class="top-actions">
-                <button class="ghost-button" id="copy-markdown" type="button">Copy Markdown</button>
-                <button class="ghost-button" id="download-json" type="button">Download JSON</button>
-            </div>
-        </header>
 
-        <div class="workspace">
-            <aside class="control-panel" aria-label="Class request controls">
-                <section class="panel-section">
-                    <div class="section-heading">
-                        <h2>Request</h2>
-                        <button class="text-button" id="reset-request" type="button">Reset</button>
+                <div class="summary-grid" id="dashboard-metrics"></div>
+
+                <div class="grid cols-3">
+                    <article class="card">
+                        <h3>Students Overview</h3>
+                        <div id="dashboard-students" class="student-list"></div>
+                    </article>
+                    <article class="card wide-card">
+                        <h3>Current Focus & Caution</h3>
+                        <div id="dashboard-focus" class="recommendation-list"></div>
+                    </article>
+                </div>
+            </section>
+
+            <section id="students" class="view hidden">
+                <div class="topbar">
+                    <div>
+                        <h2>Students</h2>
+                        <p>Create a private student profile with goals, caution, red flags, and movement patterns.</p>
                     </div>
-
-                    <label class="field">
-                        <span>Movement experience</span>
-                        <select id="experience">
-                            <option value="ShoulderFreedom">Shoulder Freedom</option>
-                            <option value="HappyHips">Happy Hips</option>
-                            <option value="SpineReset">Spine Reset</option>
-                        </select>
-                    </label>
-
-                    <div class="preset-grid" aria-label="Quick presets">
-                        <button class="preset-button active" type="button" data-preset="ShoulderFreedom">Shoulder</button>
-                        <button class="preset-button" type="button" data-preset="HappyHips">Hips</button>
-                        <button class="preset-button" type="button" data-preset="SpineReset">Spine</button>
+                    <div class="actions">
+                        <button id="new-student" type="button">
+                            <i data-lucide="user-plus" aria-hidden="true"></i>
+                            <span>New Student</span>
+                        </button>
+                        <button class="secondary" id="save-student" type="button">
+                            <i data-lucide="save" aria-hidden="true"></i>
+                            <span>Save Student</span>
+                        </button>
+                        <button class="danger" id="delete-student" type="button">
+                            <i data-lucide="trash-2" aria-hidden="true"></i>
+                            <span>Delete</span>
+                        </button>
                     </div>
+                </div>
 
-                    <div class="two-column">
+                <div class="grid cols-3">
+                    <article class="card">
+                        <h3>Student List</h3>
+                        <div id="student-list" class="student-list"></div>
+                    </article>
+
+                    <article class="card wide-card">
+                        <h3>Student Profile</h3>
+                        <div class="form-row three">
+                            <label class="field"><span>Name</span><input id="s_name"></label>
+                            <label class="field"><span>Age</span><input id="s_age" type="number" min="1"></label>
+                            <label class="field"><span>Occupation</span><input id="s_occupation"></label>
+                        </div>
+                        <div class="form-row three">
+                            <label class="field"><span>Start date</span><input id="s_start" type="date"></label>
+                            <label class="field">
+                                <span>Class type</span>
+                                <select id="s_classType">
+                                    <option>Private</option>
+                                    <option>Duet</option>
+                                    <option>Small Group</option>
+                                </select>
+                            </label>
+                            <label class="field"><span>Frequency</span><input id="s_frequency" placeholder="1x/week"></label>
+                        </div>
+                        <div class="form-row">
+                            <label class="field"><span>Main goal</span><textarea id="s_goal"></textarea></label>
+                            <label class="field"><span>Lifestyle / sport background</span><textarea id="s_lifestyle"></textarea></label>
+                        </div>
+
+                        <h4>Student Archetype</h4>
+                        <div class="check-grid three" id="archetype-checks"></div>
+
+                        <h4>Health & Caution</h4>
+                        <div class="form-row three">
+                            <label class="field"><span>Pain area</span><input id="s_painArea" placeholder="neck, low back, QL"></label>
+                            <label class="field"><span>Pain level 0-10</span><input id="s_painLevel" type="number" min="0" max="10"></label>
+                            <label class="field">
+                                <span>Status</span>
+                                <select id="s_status">
+                                    <option>Active</option>
+                                    <option>Paused</option>
+                                    <option>Inactive</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div class="form-row">
+                            <label class="field"><span>Caution / contraindication</span><textarea id="s_caution"></textarea></label>
+                            <label class="field"><span>Movement pattern / compensation</span><textarea id="s_pattern"></textarea></label>
+                        </div>
+
+                        <h4>Red Flags</h4>
+                        <div class="check-grid three" id="red-flag-checks"></div>
+                    </article>
+                </div>
+            </section>
+
+            <section id="assessment" class="view hidden">
+                <div class="topbar">
+                    <div>
+                        <h2>Assessment</h2>
+                        <p>Track posture, movement tests, body awareness, and teaching notes before programming.</p>
+                    </div>
+                    <div class="actions">
+                        <select id="assessment-student"></select>
+                        <button id="save-assessment" type="button">
+                            <i data-lucide="clipboard-check" aria-hidden="true"></i>
+                            <span>Save Assessment</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid cols-2">
+                    <article class="card">
+                        <h3>New Assessment</h3>
+                        <div class="form-row">
+                            <label class="field"><span>Date</span><input id="a_date" type="date"></label>
+                            <label class="field"><span>Assessment focus</span><input id="a_focus" placeholder="Low Back / QL"></label>
+                        </div>
+                        <label class="field"><span>Posture observation</span><textarea id="a_posture" placeholder="Head forward, rib flare, pelvic rotation"></textarea></label>
+                        <label class="field"><span>Movement tests</span><textarea id="a_tests" placeholder="Standing Roll Down:&#10;Arm Raise:&#10;Side Bend:"></textarea></label>
+                        <div class="form-row three">
+                            <label class="field"><span>Control 1-5</span><input id="a_control" type="number" min="1" max="5"></label>
+                            <label class="field"><span>Mobility 1-5</span><input id="a_mobility" type="number" min="1" max="5"></label>
+                            <label class="field"><span>Stability 1-5</span><input id="a_stability" type="number" min="1" max="5"></label>
+                        </div>
+                        <div class="form-row three">
+                            <label class="field"><span>Breath 1-5</span><input id="a_breath" type="number" min="1" max="5"></label>
+                            <label class="field"><span>Awareness 1-5</span><input id="a_awareness" type="number" min="1" max="5"></label>
+                            <label class="field"><span>Endurance 1-5</span><input id="a_endurance" type="number" min="1" max="5"></label>
+                        </div>
+                        <label class="field"><span>Teacher note</span><textarea id="a_note"></textarea></label>
+                    </article>
+
+                    <article class="card">
+                        <h3>Assessment History</h3>
+                        <div id="assessment-history" class="timeline"></div>
+                    </article>
+                </div>
+            </section>
+
+            <section id="session" class="view hidden">
+                <div class="topbar">
+                    <div>
+                        <h2>Session Log</h2>
+                        <p>Write the class record and generate a deterministic MPS plan from the selected student signal.</p>
+                    </div>
+                    <div class="actions">
+                        <select id="session-student"></select>
+                        <button id="generate-session-plan" type="button">
+                            <i data-lucide="sparkles" aria-hidden="true"></i>
+                            <span>Generate Plan</span>
+                        </button>
+                        <button class="secondary" id="save-session" type="button">
+                            <i data-lucide="save" aria-hidden="true"></i>
+                            <span>Save Session</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid cols-2">
+                    <article class="card">
+                        <h3>New Session</h3>
+                        <div class="form-row three">
+                            <label class="field"><span>Date</span><input id="l_date" type="date"></label>
+                            <label class="field"><span>Session No.</span><input id="l_no" type="number" min="1"></label>
+                            <label class="field">
+                                <span>Duration</span>
+                                <select id="l_duration">
+                                    <option value="45">45 min</option>
+                                    <option value="60" selected>60 min</option>
+                                    <option value="75">75 min</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div class="form-row three">
+                            <label class="field"><span>Energy 1-5</span><input id="l_energy" type="number" min="1" max="5"></label>
+                            <label class="field"><span>Pain before 0-10</span><input id="l_painBefore" type="number" min="0" max="10"></label>
+                            <label class="field"><span>Pain after 0-10</span><input id="l_painAfter" type="number" min="0" max="10"></label>
+                        </div>
+                        <div class="form-row">
+                            <label class="field">
+                                <span>Level</span>
+                                <select id="l_level">
+                                    <option value="Beginner">Beginner</option>
+                                    <option value="BeginnerIntermediate" selected>Beginner Intermediate</option>
+                                    <option value="Intermediate">Intermediate</option>
+                                    <option value="IntermediateAdvanced">Intermediate Advanced</option>
+                                    <option value="Advanced">Advanced</option>
+                                </select>
+                            </label>
+                            <label class="field">
+                                <span>Movement experience</span>
+                                <select id="l_experience_select">
+                                    <option value="ShoulderFreedom">Shoulder Freedom</option>
+                                    <option value="HappyHips">Happy Hips</option>
+                                    <option value="SpineReset">Spine Reset</option>
+                                </select>
+                            </label>
+                        </div>
                         <label class="field">
-                            <span>Duration</span>
-                            <select id="duration">
-                                <option value="45">45 min</option>
-                                <option value="60" selected>60 min</option>
-                                <option value="75">75 min</option>
-                            </select>
+                            <span>Apparatus</span>
+                            <div class="check-grid" id="session-equipment">
+                                <label class="check active"><input type="checkbox" value="Reformer" checked><span>Reformer</span></label>
+                                <label class="check active"><input type="checkbox" value="Chair" checked><span>Chair</span></label>
+                            </div>
                         </label>
+                        <div class="form-row">
+                            <label class="field"><span>Main theme</span><input id="l_theme" placeholder="QL Rebalance / Scapular Stability"></label>
+                            <label class="field"><span>Selected playbook</span><select id="l_playbook"></select></label>
+                        </div>
+                        <label class="field"><span>Movement experience note</span><textarea id="l_experience" placeholder="What the student should feel after class"></textarea></label>
+                        <label class="field"><span>Before test</span><textarea id="l_before"></textarea></label>
+                        <label class="field"><span>Exercises / apparatus / spring / reps</span><textarea id="l_exercises"></textarea></label>
+                    </article>
 
-                        <label class="field">
-                            <span>Students</span>
-                            <input id="students" type="number" value="4" min="1" max="32">
-                        </label>
+                    <article class="card">
+                        <h3>Observation & Reflection</h3>
+                        <div class="form-row">
+                            <label class="field"><span>Easy</span><textarea id="l_easy"></textarea></label>
+                            <label class="field"><span>Hard</span><textarea id="l_hard"></textarea></label>
+                        </div>
+                        <label class="field"><span>Compensation found</span><textarea id="l_comp"></textarea></label>
+                        <label class="field"><span>Cue that worked</span><textarea id="l_cue"></textarea></label>
+                        <label class="field"><span>After test</span><textarea id="l_after"></textarea></label>
+                        <div class="form-row">
+                            <label class="field"><span>Class result %</span><input id="l_result" type="number" min="0" max="100"></label>
+                            <label class="field"><span>Student feeling</span><input id="l_feeling" placeholder="lighter, clearer, less tension"></label>
+                        </div>
+                        <label class="field"><span>Next plan</span><textarea id="l_next"></textarea></label>
+                    </article>
+                </div>
+
+                <article class="card studio-section">
+                    <div class="section-head compact">
+                        <div>
+                            <h3>Generated MPS Plan</h3>
+                            <p>Saved with the session as a snapshot for future backend sync.</p>
+                        </div>
+                        <nav class="view-tabs" aria-label="Session plan views">
+                            <button class="tab-button active" type="button" data-plan-view="plan">Plan</button>
+                            <button class="tab-button" type="button" data-plan-view="markdown">Markdown</button>
+                            <button class="tab-button" type="button" data-plan-view="json">JSON</button>
+                        </nav>
                     </div>
+                    <p class="error-message" id="session-plan-error" role="alert"></p>
+                    <div id="session-plan" class="content-view"></div>
+                </article>
+            </section>
 
-                    <label class="field">
-                        <span>Level</span>
-                        <select id="level">
-                            <option value="Beginner">Beginner</option>
-                            <option value="BeginnerIntermediate" selected>Beginner Intermediate</option>
-                            <option value="Intermediate">Intermediate</option>
-                            <option value="IntermediateAdvanced">Intermediate Advanced</option>
-                            <option value="Advanced">Advanced</option>
-                        </select>
-                    </label>
-                </section>
-
-                <section class="panel-section">
-                    <h2>Equipment</h2>
-                    <div class="toggle-row" id="equipment">
-                        <label class="toggle-chip active">
-                            <input type="checkbox" value="Reformer" checked>
-                            <span>Reformer</span>
-                        </label>
-                        <label class="toggle-chip active">
-                            <input type="checkbox" value="Chair" checked>
-                            <span>Chair</span>
-                        </label>
+            <section id="progress" class="view hidden">
+                <div class="topbar">
+                    <div>
+                        <h2>Progress</h2>
+                        <p>Review the student timeline, result trend, repeated themes, and latest next plan.</p>
                     </div>
-                    <p class="hint">Mat and Standing are used automatically for assessment, transfer, and retest phases.</p>
-                </section>
-
-                <section class="panel-section">
-                    <h2>Safety</h2>
-                    <label class="field">
-                        <span>Risk policy</span>
-                        <select id="risk-policy">
-                            <option value="Conservative" selected>Conservative</option>
-                            <option value="Balanced">Balanced</option>
-                        </select>
-                    </label>
-
-                    <div class="toggle-row compact" id="contraindications">
-                        <label class="toggle-chip"><input type="checkbox" value="wrist_pain"><span>Wrist pain</span></label>
-                        <label class="toggle-chip"><input type="checkbox" value="knee_pain"><span>Knee pain</span></label>
-                        <label class="toggle-chip"><input type="checkbox" value="low_back_pain"><span>Low back</span></label>
-                        <label class="toggle-chip"><input type="checkbox" value="high_blood_pressure"><span>High BP</span></label>
+                    <div class="actions">
+                        <select id="progress-student"></select>
                     </div>
+                </div>
 
-                    <label class="field">
-                        <span>Other contraindications</span>
-                        <input id="contra-extra" type="text" placeholder="acute_low_back_pain, ankle_instability">
-                    </label>
-                </section>
+                <div class="grid cols-3">
+                    <article class="card">
+                        <h3>Snapshot</h3>
+                        <div id="progress-snapshot"></div>
+                    </article>
+                    <article class="card wide-card">
+                        <h3>Timeline</h3>
+                        <div id="progress-timeline" class="timeline"></div>
+                    </article>
+                </div>
+            </section>
 
-                <section class="panel-section">
-                    <h2>Observations</h2>
-                    <textarea id="observations" rows="5">thoracic stiffness, limited overhead reach, desk workers</textarea>
-                    <button class="primary-button" id="generate-plan" type="button">Generate Plan</button>
-                    <p class="error-message" id="error-message" role="alert"></p>
-                </section>
-            </aside>
+            <section id="playbook" class="view hidden">
+                <div class="topbar">
+                    <div>
+                        <h2>Playbook Link</h2>
+                        <p>Map student archetype and safety context to a movement theme and exercise family.</p>
+                    </div>
+                    <div class="actions">
+                        <select id="playbook-student"></select>
+                    </div>
+                </div>
 
-            <main class="plan-panel" aria-live="polite">
-                <nav class="view-tabs" aria-label="Plan views">
-                    <button class="tab-button active" type="button" data-view="plan">Plan</button>
-                    <button class="tab-button" type="button" data-view="markdown">Markdown</button>
-                    <button class="tab-button" type="button" data-view="json">JSON</button>
-                </nav>
+                <div class="grid cols-2">
+                    <article class="card">
+                        <h3>Detected Pattern</h3>
+                        <div id="detected-pattern"></div>
+                    </article>
+                    <article class="card">
+                        <h3>Recommended Playbook</h3>
+                        <div id="playbook-recommendation"></div>
+                    </article>
+                </div>
 
-                <section class="summary-band" id="summary-band"></section>
-                <section class="strategy-band" id="strategy-band"></section>
-                <section class="content-view" id="content-view"></section>
-            </main>
-        </div>
+                <article class="card studio-section">
+                    <h3>Theme Library</h3>
+                    <div class="table-wrap">
+                        <table id="theme-table"></table>
+                    </div>
+                </article>
+            </section>
+
+            <section id="report" class="view hidden">
+                <div class="topbar">
+                    <div>
+                        <h2>Student Report</h2>
+                        <p>Generate a concise progress report for teacher review or client sharing.</p>
+                    </div>
+                    <div class="actions">
+                        <select id="report-student"></select>
+                        <button class="secondary" id="copy-report" type="button">
+                            <i data-lucide="clipboard-copy" aria-hidden="true"></i>
+                            <span>Copy Report</span>
+                        </button>
+                        <button class="ghost" id="print-report" type="button">
+                            <i data-lucide="printer" aria-hidden="true"></i>
+                            <span>Print</span>
+                        </button>
+                    </div>
+                </div>
+
+                <article class="card">
+                    <h3>Progress Report</h3>
+                    <pre id="student-report" class="print-area"></pre>
+                </article>
+            </section>
+        </main>
     </div>
 
+    <script src="https://unpkg.com/lucide@latest"></script>
     <script src="seed-data.js"></script>
     <script src="mps-engine.js"></script>
     <script src="app.js"></script>
