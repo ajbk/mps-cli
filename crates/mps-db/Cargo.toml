@@ -1,0 +1,11 @@
+[package]
+name = "mps-db"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+mps-core = { path = "../mps-core" }
+anyhow.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
