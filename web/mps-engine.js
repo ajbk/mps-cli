@@ -154,6 +154,16 @@ const PHASE_PURPOSES = {
     'RESET & RETEST': 'Retest and confirm improvement'
 };
 
+function exerciseAllowedForPhase(equipment, selectedEquipment, phase) {
+    if (equipment === 'Reformer' || equipment === 'Chair') {
+        return selectedEquipment.includes(equipment);
+    }
+    if (equipment === 'Mat' || equipment === 'Standing') {
+        return phase === 'ARRIVE' || phase === 'TRANSFER' || phase === 'RESET & RETEST';
+    }
+    return false;
+}
+
 // ── Main Generator ────────────────────────────────────────────
 
 function generateClassPlan(request) {
@@ -219,16 +229,19 @@ function generateClassPlan(request) {
                 return minNum <= levelNum && levelNum <= maxNum;
             })
             .filter(ex => {
-                // Only include exercises matching selected equipment
                 const equip = request.equipment || [];
-                return equip.length === 0 || equip.includes(ex.equipment);
+                return exerciseAllowedForPhase(ex.equipment, equip, alloc.phase);
             })
-            .map(ex => ({
-                ex,
-                score: roleMatchScore(ex.roles, targetRole)
+            .map(ex => {
+                const equipmentScore = (request.equipment || []).includes(ex.equipment) ? 5 : 0;
+                return {
+                    ex,
+                    score: roleMatchScore(ex.roles, targetRole)
                     + difficultyFitScore(ex.difficulty, request.level)
                     + objectiveMatchScore(ex.objectives, strategy.preferred_exercise_objectives)
-            }))
+                    + equipmentScore
+                };
+            })
             .sort((a, b) => b.score - a.score);
 
         const phaseExercises = [];

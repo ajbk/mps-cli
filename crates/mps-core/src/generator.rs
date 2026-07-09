@@ -1,10 +1,25 @@
 use crate::{
-    AssessmentPlan, BenchmarkPlan, ClassPlan, ClassRequest, ExerciseRole, ExerciseTeachingUnit,
-    JourneyPhasePlan, MovementJourneyPhase, MpsRepository, MpsResult, RetestPlan,
-    SafetyExerciseNote, SafetySummary,
-    build_strategy, difficulty_fit_score, objective_match_score,
-    phase_allocations_for_duration, role_match_score,
+    build_strategy, difficulty_fit_score, objective_match_score, phase_allocations_for_duration,
+    role_match_score, AssessmentPlan, BenchmarkPlan, ClassPlan, ClassRequest, Equipment,
+    ExerciseRole, ExerciseTeachingUnit, JourneyPhasePlan, MovementJourneyPhase, MpsRepository,
+    MpsResult, RetestPlan, SafetyExerciseNote, SafetySummary,
 };
+
+fn exercise_allowed_for_phase(
+    equipment: Equipment,
+    selected_equipment: &[Equipment],
+    phase: MovementJourneyPhase,
+) -> bool {
+    match equipment {
+        Equipment::Reformer | Equipment::Chair => selected_equipment.contains(&equipment),
+        Equipment::Mat | Equipment::Standing => matches!(
+            phase,
+            MovementJourneyPhase::Arrive
+                | MovementJourneyPhase::Transfer
+                | MovementJourneyPhase::ResetRetest
+        ),
+    }
+}
 
 pub fn generate_class_plan<R: MpsRepository>(
     request: &ClassRequest,
@@ -67,13 +82,19 @@ pub fn generate_class_plan<R: MpsRepository>(
                 let level_num = request.level.numeric();
                 ex.min_level.numeric() <= level_num && level_num <= ex.max_level.numeric()
             })
+            .filter(|ex| {
+                exercise_allowed_for_phase(ex.equipment, &request.equipment, allocation.phase)
+            })
             .map(|ex| {
                 let r_score = role_match_score(&ex.roles, target_role);
                 let d_score = difficulty_fit_score(ex.difficulty, request.level);
                 let o_score =
                     objective_match_score(&ex.objectives, &strategy.preferred_exercise_objectives);
-                let equipment_score: i32 =
-                    if request.equipment.contains(&ex.equipment) { 5 } else { 0 };
+                let equipment_score: i32 = if request.equipment.contains(&ex.equipment) {
+                    5
+                } else {
+                    0
+                };
                 (ex, r_score + d_score + o_score + equipment_score)
             })
             .collect();
@@ -117,9 +138,7 @@ pub fn generate_class_plan<R: MpsRepository>(
             remaining -= dur;
         }
 
-        if phase_exercises.is_empty()
-            && matches!(allocation.phase, MovementJourneyPhase::Build)
-        {
+        if phase_exercises.is_empty() && matches!(allocation.phase, MovementJourneyPhase::Build) {
             return Err(crate::MpsError::NoCandidates {
                 phase: allocation.phase.label().to_string(),
                 role: format!("{:?}", target_role),
@@ -233,10 +252,7 @@ mod tests {
     struct FakeRepository;
 
     impl MpsRepository for FakeRepository {
-        fn base_strategy(
-            &self,
-            _exp: MovementExperience,
-        ) -> MpsResult<BaseStrategyRecord> {
+        fn base_strategy(&self, _exp: MovementExperience) -> MpsResult<BaseStrategyRecord> {
             Ok(BaseStrategyRecord {
                 movement_experience: MovementExperience::ShoulderFreedom,
                 primary_focus: MovementSystem::Shoulder,
@@ -259,10 +275,7 @@ mod tests {
         ) -> MpsResult<Vec<ObservationModifierRecord>> {
             Ok(vec![])
         }
-        fn benchmarks(
-            &self,
-            _exp: MovementExperience,
-        ) -> MpsResult<Vec<BenchmarkRecord>> {
+        fn benchmarks(&self, _exp: MovementExperience) -> MpsResult<Vec<BenchmarkRecord>> {
             Ok(vec![BenchmarkRecord {
                 id: "overhead_reach".to_string(),
                 name: "Overhead Reach Test".to_string(),
@@ -343,6 +356,15 @@ mod tests {
                     3,
                 ),
                 make_ex(
+                    "chair_pump",
+                    "Chair Pump",
+                    Equipment::Chair,
+                    vec![ExerciseRole::Prime, ExerciseRole::Challenge],
+                    ClassLevel::BeginnerIntermediate,
+                    ClassLevel::Advanced,
+                    3,
+                ),
+                make_ex(
                     "standing_roll",
                     "Standing Roll Down",
                     Equipment::Standing,
@@ -373,6 +395,74 @@ mod tests {
         assert_eq!(plan.journey.len(), 7);
         assert_eq!(plan.duration_minutes, 60);
         assert_eq!(plan.movement_strategy.emphasis.values().sum::<u32>(), 100);
-        assert!(plan.journey.iter().any(|p| p.phase == MovementJourneyPhase::Build));
+        assert!(plan
+            .journey
+            .iter()
+            .any(|p| p.phase == MovementJourneyPhase::Build));
+    }
+
+    #[test]
+    fn selected_primary_apparatus_is_enforced() {
+        let request = ClassRequest {
+            students: 3,
+            movement_experience: MovementExperience::ShoulderFreedom,
+            level: ClassLevel::BeginnerIntermediate,
+            equipment: vec![Equipment::Chair],
+            duration_minutes: 60,
+            observations: vec![],
+            group_safety: GroupSafety {
+                contraindications: vec![],
+                risk_policy: RiskPolicy::Balanced,
+            },
+        };
+
+        let plan = generate_class_plan(&request, &FakeRepository).unwrap();
+
+        assert!(!plan
+            .journey
+            .iter()
+            .flat_map(|phase| &phase.exercises)
+            .any(|exercise| exercise.apparatus == Equipment::Reformer));
+        assert!(plan
+            .journey
+            .iter()
+            .flat_map(|phase| &phase.exercises)
+            .any(|exercise| exercise.apparatus == Equipment::Chair));
+    }
+
+    #[test]
+    fn movement_context_is_allowed_for_context_phases() {
+        let request = ClassRequest {
+            students: 3,
+            movement_experience: MovementExperience::ShoulderFreedom,
+            level: ClassLevel::BeginnerIntermediate,
+            equipment: vec![Equipment::Chair],
+            duration_minutes: 60,
+            observations: vec![],
+            group_safety: GroupSafety {
+                contraindications: vec![],
+                risk_policy: RiskPolicy::Balanced,
+            },
+        };
+
+        let plan = generate_class_plan(&request, &FakeRepository).unwrap();
+
+        let arrive = plan
+            .journey
+            .iter()
+            .find(|phase| phase.phase == MovementJourneyPhase::Arrive)
+            .unwrap();
+        let reset = plan
+            .journey
+            .iter()
+            .find(|phase| phase.phase == MovementJourneyPhase::ResetRetest)
+            .unwrap();
+
+        assert!(arrive.exercises.iter().any(|exercise| {
+            matches!(exercise.apparatus, Equipment::Mat | Equipment::Standing)
+        }));
+        assert!(reset.exercises.iter().any(|exercise| {
+            matches!(exercise.apparatus, Equipment::Mat | Equipment::Standing)
+        }));
     }
 }

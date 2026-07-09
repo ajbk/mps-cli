@@ -74,7 +74,9 @@ fn role_from_db(s: &str) -> MpsResult<ExerciseRole> {
         "Challenge" => Ok(ExerciseRole::Challenge),
         "Transfer" => Ok(ExerciseRole::Transfer),
         "Restore" => Ok(ExerciseRole::Restore),
-        other => Err(MpsError::Generation(format!("Unknown exercise role: {other}"))),
+        other => Err(MpsError::Generation(format!(
+            "Unknown exercise role: {other}"
+        ))),
     }
 }
 
@@ -102,14 +104,12 @@ struct StrategyRow {
 
 #[derive(FromRow)]
 struct EmphasisRow {
-    strategy_id: i64,
     system_name: String,
     emphasis_value: i32,
 }
 
 #[derive(FromRow)]
 struct ObjectiveRow {
-    strategy_id: i64,
     objective: String,
 }
 
@@ -182,7 +182,6 @@ struct ExerciseContraindicationRow {
 #[derive(FromRow)]
 struct BenchmarkRow {
     id: String,
-    movement_experience: String,
     name: String,
     instruction: String,
 }
@@ -269,10 +268,7 @@ impl SqliteRepository {
 }
 
 impl MpsRepository for SqliteRepository {
-    fn base_strategy(
-        &self,
-        experience: MovementExperience,
-    ) -> MpsResult<BaseStrategyRecord> {
+    fn base_strategy(&self, experience: MovementExperience) -> MpsResult<BaseStrategyRecord> {
         let db_exp = experience_to_db(experience).to_string();
         let pool = self.pool.clone();
 
@@ -293,7 +289,7 @@ impl MpsRepository for SqliteRepository {
 
             // 2. Emphasis
             let emphasis_rows: Vec<EmphasisRow> = sqlx::query_as(
-                "SELECT strategy_id, system_name, emphasis_value
+                "SELECT system_name, emphasis_value
                  FROM base_strategy_emphasis WHERE strategy_id = ?1",
             )
             .bind(strategy.id)
@@ -310,7 +306,7 @@ impl MpsRepository for SqliteRepository {
 
             // 3. Objectives
             let objective_rows: Vec<ObjectiveRow> = sqlx::query_as(
-                "SELECT strategy_id, objective
+                "SELECT objective
                  FROM base_strategy_objectives WHERE strategy_id = ?1",
             )
             .bind(strategy.id)
@@ -486,7 +482,7 @@ impl MpsRepository for SqliteRepository {
 
         self.runtime.block_on(async move {
             let bench_rows: Vec<BenchmarkRow> = sqlx::query_as(
-                "SELECT id, movement_experience, name, instruction \
+                "SELECT id, name, instruction \
                  FROM benchmarks WHERE movement_experience = ?1",
             )
             .bind(&db_exp)
@@ -569,12 +565,11 @@ impl MpsRepository for SqliteRepository {
                     .await
                     .map_err(|e| MpsError::Repository(format!("Obj query failed: {e}")))?;
 
-            let cue_rows: Vec<ExerciseCueRow> = sqlx::query_as(
-                "SELECT exercise_id, cue, sort_order FROM exercise_teaching_cues",
-            )
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| MpsError::Repository(format!("Cues query failed: {e}")))?;
+            let cue_rows: Vec<ExerciseCueRow> =
+                sqlx::query_as("SELECT exercise_id, cue, sort_order FROM exercise_teaching_cues")
+                    .fetch_all(&pool)
+                    .await
+                    .map_err(|e| MpsError::Repository(format!("Cues query failed: {e}")))?;
 
             let contra_rows: Vec<ExerciseContraindicationRow> = sqlx::query_as(
                 "SELECT exercise_id, tag, severity, note FROM exercise_contraindications",
@@ -614,15 +609,14 @@ impl MpsRepository for SqliteRepository {
 
             let mut contra_map: HashMap<String, Vec<ExerciseContraindicationRow>> = HashMap::new();
             for c in &contra_rows {
-                contra_map
-                    .entry(c.exercise_id.clone())
-                    .or_default()
-                    .push(ExerciseContraindicationRow {
+                contra_map.entry(c.exercise_id.clone()).or_default().push(
+                    ExerciseContraindicationRow {
                         exercise_id: c.exercise_id.clone(),
                         tag: c.tag.clone(),
                         severity: c.severity.clone(),
                         note: c.note.clone(),
-                    });
+                    },
+                );
             }
 
             // 4. Build result
@@ -683,6 +677,9 @@ impl MpsRepository for SqliteRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mps_core::{
+        generate_class_plan, ClassRequest, GroupSafety, MovementJourneyPhase, RiskPolicy,
+    };
 
     const SEED: &str = include_str!("../../../data/seed/mps_seed.sql");
 
@@ -709,9 +706,7 @@ mod tests {
     #[test]
     fn base_strategy_happy_hips() {
         let repo = repo_with_seed();
-        let bs = repo
-            .base_strategy(MovementExperience::HappyHips)
-            .unwrap();
+        let bs = repo.base_strategy(MovementExperience::HappyHips).unwrap();
         assert_eq!(bs.primary_focus, MovementSystem::Hip);
         assert_eq!(bs.secondary_focus, MovementSystem::Legs);
     }
@@ -719,9 +714,7 @@ mod tests {
     #[test]
     fn base_strategy_spine_reset() {
         let repo = repo_with_seed();
-        let bs = repo
-            .base_strategy(MovementExperience::SpineReset)
-            .unwrap();
+        let bs = repo.base_strategy(MovementExperience::SpineReset).unwrap();
         assert_eq!(bs.primary_focus, MovementSystem::Spine);
         assert_eq!(bs.secondary_focus, MovementSystem::BreathCore);
     }
@@ -746,8 +739,14 @@ mod tests {
             .observation_modifiers(&["knee pain and hip tightness".into()])
             .unwrap();
         let ids: Vec<&str> = mods.iter().map(|m| m.id.as_str()).collect();
-        assert!(ids.contains(&"knee_pain"), "should match knee_pain, got {ids:?}");
-        assert!(ids.contains(&"hip_tightness"), "should match hip_tightness, got {ids:?}");
+        assert!(
+            ids.contains(&"knee_pain"),
+            "should match knee_pain, got {ids:?}"
+        );
+        assert!(
+            ids.contains(&"hip_tightness"),
+            "should match hip_tightness, got {ids:?}"
+        );
     }
 
     #[test]
@@ -786,16 +785,17 @@ mod tests {
             .unwrap();
         assert_eq!(benches.len(), 2);
         assert!(benches.iter().any(|b| b.id == "overhead_reach_test"));
-        let ort = benches.iter().find(|b| b.id == "overhead_reach_test").unwrap();
+        let ort = benches
+            .iter()
+            .find(|b| b.id == "overhead_reach_test")
+            .unwrap();
         assert_eq!(ort.watch_points.len(), 3);
     }
 
     #[test]
     fn benchmarks_happy_hips() {
         let repo = repo_with_seed();
-        let benches = repo
-            .benchmarks(MovementExperience::HappyHips)
-            .unwrap();
+        let benches = repo.benchmarks(MovementExperience::HappyHips).unwrap();
         assert_eq!(benches.len(), 2);
         assert!(benches.iter().any(|b| b.id == "deep_squat_test"));
     }
@@ -836,5 +836,42 @@ mod tests {
             .find(|c| c.tag == "high_blood_pressure")
             .unwrap();
         assert_eq!(hb.severity, SafetySeverity::HardExclude);
+    }
+
+    #[test]
+    fn generated_plan_respects_requested_equipment_with_seed_data() {
+        let repo = repo_with_seed();
+        let request = ClassRequest {
+            students: 4,
+            movement_experience: MovementExperience::ShoulderFreedom,
+            level: ClassLevel::BeginnerIntermediate,
+            equipment: vec![Equipment::Chair],
+            duration_minutes: 60,
+            observations: vec!["limited overhead reach".to_string()],
+            group_safety: GroupSafety {
+                contraindications: vec![],
+                risk_policy: RiskPolicy::Balanced,
+            },
+        };
+
+        let plan = generate_class_plan(&request, &repo).unwrap();
+
+        assert!(!plan
+            .journey
+            .iter()
+            .flat_map(|phase| &phase.exercises)
+            .any(|exercise| exercise.apparatus == Equipment::Reformer));
+
+        let build = plan
+            .journey
+            .iter()
+            .find(|phase| phase.phase == MovementJourneyPhase::Build)
+            .unwrap();
+
+        assert!(!build.exercises.is_empty());
+        assert!(build
+            .exercises
+            .iter()
+            .all(|exercise| exercise.apparatus == Equipment::Chair));
     }
 }

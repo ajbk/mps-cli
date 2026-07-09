@@ -1,1 +1,7 @@
 .worktrees
+.vercel
+target/
+output/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

@@ -3,421 +3,138 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MPS — Pilates Class Generator</title>
-    <style>
-        :root {
-            --bg: #0f0f13;
-            --card: #1a1a24;
-            --border: #2a2a3a;
-            --accent: #7c5cff;
-            --accent-light: #9b84ff;
-            --text: #e8e8f0;
-            --text-dim: #8888a0;
-            --success: #4ade80;
-            --warning: #fbbf24;
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-        }
-        .container { max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem; }
-        header {
-            text-align: center;
-            padding: 3rem 0 2rem;
-        }
-        header h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent), var(--accent-light));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 0.5rem;
-        }
-        header p { color: var(--text-dim); font-size: 1.1rem; }
-        .card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 2rem;
-            margin-bottom: 1.5rem;
-        }
-        .card h2 {
-            font-size: 1.2rem;
-            margin-bottom: 1.5rem;
-            color: var(--accent-light);
-        }
-        .form-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-        .form-group { display: flex; flex-direction: column; gap: 0.4rem; }
-        .form-group.full { grid-column: 1 / -1; }
-        label { font-size: 0.85rem; color: var(--text-dim); font-weight: 500; }
-        select, input, textarea {
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 0.75rem 1rem;
-            color: var(--text);
-            font-size: 0.95rem;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-        select:focus, input:focus, textarea:focus {
-            border-color: var(--accent);
-        }
-        textarea { resize: vertical; min-height: 60px; font-family: inherit; }
-        .checkbox-group {
-            display: flex; flex-wrap: wrap; gap: 0.5rem;
-        }
-        .chip {
-            display: inline-flex; align-items: center; gap: 0.3rem; position: relative;
-            background: var(--bg); border: 1px solid var(--border);
-            border-radius: 20px; padding: 0.4rem 0.8rem; cursor: pointer;
-            font-size: 0.85rem; transition: all 0.2s; user-select: none;
-        }
-        .chip.active { border-color: var(--accent); background: rgba(124,92,255,0.25); color: #fff; box-shadow: 0 0 8px rgba(124,92,255,0.3); }
-        .chip.active::before { content: "✓ "; color: var(--success); font-weight: 700; }
-        .chip input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
-        .btn {
-            background: linear-gradient(135deg, var(--accent), var(--accent-light));
-            color: white; border: none; border-radius: 8px;
-            padding: 0.9rem 2rem; font-size: 1rem; font-weight: 600;
-            cursor: pointer; transition: opacity 0.2s; width: 100%;
-            margin-top: 1rem;
-        }
-        .btn:hover { opacity: 0.9; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        #output {
-            display: none;
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 2rem;
-            margin-top: 1.5rem;
-        }
-        #output h2 { color: var(--accent-light); margin-bottom: 1rem; }
-        #plan-content {
-            background: var(--bg);
-            border-radius: 8px;
-            padding: 1.5rem;
-            font-size: 0.9rem;
-            line-height: 1.7;
-            white-space: pre-wrap;
-            font-family: 'JetBrains Mono', 'Fira Code', monospace;
-            max-height: 70vh;
-            overflow-y: auto;
-        }
-        #plan-content h1, #plan-content h2, #plan-content h3 {
-            color: var(--accent-light);
-            margin: 1rem 0 0.5rem;
-        }
-        #plan-content table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
-        #plan-content th, #plan-content td {
-            border: 1px solid var(--border); padding: 0.4rem 0.8rem; text-align: left;
-        }
-        #plan-content th { background: rgba(124,92,255,0.1); }
-        .phase-header {
-            display: flex; align-items: center; gap: 0.5rem;
-            padding: 0.5rem 0; margin-top: 1rem;
-            border-bottom: 1px solid var(--border);
-        }
-        .phase-badge {
-            background: var(--accent); color: white;
-            padding: 0.2rem 0.6rem; border-radius: 4px;
-            font-size: 0.75rem; font-weight: 600;
-        }
-        .exercise-card {
-            background: rgba(124,92,255,0.05);
-            border-left: 3px solid var(--accent);
-            padding: 0.8rem 1rem; margin: 0.5rem 0; border-radius: 0 8px 8px 0;
-        }
-        .exercise-card .name { font-weight: 600; color: var(--text); }
-        .exercise-card .meta { font-size: 0.8rem; color: var(--text-dim); margin-top: 0.3rem; }
-        .exercise-card .cues { font-size: 0.85rem; color: var(--text-dim); margin-top: 0.5rem; }
-        .exercise-card .cue::before { content: "💡 "; }
-        .safety-badge {
-            display: inline-block; background: rgba(251,191,36,0.15);
-            color: var(--warning); padding: 0.1rem 0.5rem; border-radius: 4px;
-            font-size: 0.75rem; margin: 0.2rem 0.2rem 0 0;
-        }
-        .stats {
-            display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;
-            margin: 1.5rem 0; text-align: center;
-        }
-        .stat { background: var(--bg); border-radius: 8px; padding: 1rem; }
-        .stat-value { font-size: 1.5rem; font-weight: 700; color: var(--accent-light); }
-        .stat-label { font-size: 0.75rem; color: var(--text-dim); margin-top: 0.3rem; }
-        .toolbar {
-            display: flex; gap: 0.5rem; margin-bottom: 1rem;
-        }
-        .toolbar button {
-            background: var(--bg); border: 1px solid var(--border);
-            color: var(--text-dim); border-radius: 6px; padding: 0.4rem 0.8rem;
-            cursor: pointer; font-size: 0.8rem; transition: all 0.2s;
-        }
-        .toolbar button:hover { border-color: var(--accent); color: var(--text); }
-        .toolbar button.active { border-color: var(--accent); color: var(--accent-light); }
-        footer {
-            text-align: center; padding: 2rem 0; color: var(--text-dim);
-            font-size: 0.8rem;
-        }
-        @media (max-width: 600px) {
-            .form-grid { grid-template-columns: 1fr; }
-            .stats { grid-template-columns: repeat(2, 1fr); }
-            header h1 { font-size: 2rem; }
-        }
-    </style>
+    <title>MPS - Pilates Class Plan Studio</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>MPS</h1>
-            <p>Memellow Programming System — Pilates Class Plan Generator</p>
+    <div class="app-shell">
+        <header class="topbar">
+            <div>
+                <div class="brand-row">
+                    <span class="brand-mark">MPS</span>
+                    <span class="status-pill">Deterministic engine</span>
+                </div>
+                <p class="subtitle">Pilates class plan studio for Total Body programming.</p>
+            </div>
+            <div class="top-actions">
+                <button class="ghost-button" id="copy-markdown" type="button">Copy Markdown</button>
+                <button class="ghost-button" id="download-json" type="button">Download JSON</button>
+            </div>
         </header>
 
-        <div class="card">
-            <h2>📋 Class Request</h2>
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>Movement Experience</label>
-                    <select id="experience">
-                        <option value="ShoulderFreedom">Shoulder Freedom</option>
-                        <option value="HappyHips">Happy Hips</option>
-                        <option value="SpineReset">Spine Reset</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Duration (minutes)</label>
-                    <select id="duration">
-                        <option value="45">45 min</option>
-                        <option value="60" selected>60 min</option>
-                        <option value="75">75 min</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Class Level</label>
-                    <select id="level">
-                        <option value="Beginner">Beginner</option>
-                        <option value="BeginnerIntermediate" selected>Beginner Intermediate</option>
-                        <option value="Intermediate">Intermediate</option>
-                        <option value="IntermediateAdvanced">Intermediate Advanced</option>
-                        <option value="Advanced">Advanced</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Number of Students</label>
-                    <input type="number" id="students" value="4" min="1" max="20">
-                </div>
-                <div class="form-group full">
-                    <label>Equipment Available</label>
-                    <div class="checkbox-group" id="equipment">
-                        <label class="chip active"><input type="checkbox" value="Reformer" checked>Reformer</label>
-                        <label class="chip active"><input type="checkbox" value="Chair" checked>Chair</label>
-                        <label class="chip"><input type="checkbox" value="Mat">Mat</label>
-                        <label class="chip"><input type="checkbox" value="Standing">Standing</label>
+        <div class="workspace">
+            <aside class="control-panel" aria-label="Class request controls">
+                <section class="panel-section">
+                    <div class="section-heading">
+                        <h2>Request</h2>
+                        <button class="text-button" id="reset-request" type="button">Reset</button>
                     </div>
-                </div>
-                <div class="form-group">
-                    <label>Risk Policy</label>
-                    <select id="risk-policy">
-                        <option value="Conservative">Conservative</option>
-                        <option value="Balanced" selected>Balanced</option>
-                        <option value="Aggressive">Aggressive</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Contraindications</label>
-                    <input type="text" id="contra" placeholder="e.g. knee_pain, wrist_pain" value="">
-                </div>
-                <div class="form-group full">
-                    <label>Observations (what you see in the group)</label>
-                    <textarea id="observations" placeholder="e.g. thoracic stiffness, limited overhead reach, office workers">limited overhead reach, desk workers</textarea>
-                </div>
-            </div>
-            <button class="btn" id="generate-btn" onclick="generate()">✨ Generate Class Plan</button>
-        </div>
 
-        <div id="output">
-            <h2>📄 Generated Class Plan</h2>
-            <div class="toolbar">
-                <button class="active" onclick="setView('rendered')">Rendered</button>
-                <button onclick="setView('markdown')">Markdown</button>
-                <button onclick="setView('json')">JSON</button>
-                <button onclick="copyOutput()">📋 Copy</button>
-            </div>
-            <div class="stats" id="stats"></div>
-            <div id="plan-content"></div>
-        </div>
+                    <label class="field">
+                        <span>Movement experience</span>
+                        <select id="experience">
+                            <option value="ShoulderFreedom">Shoulder Freedom</option>
+                            <option value="HappyHips">Happy Hips</option>
+                            <option value="SpineReset">Spine Reset</option>
+                        </select>
+                    </label>
 
-        <footer>
-            MPS v0.1.0 — Built with Rust 🦀 + Deterministic AI
-        </footer>
+                    <div class="preset-grid" aria-label="Quick presets">
+                        <button class="preset-button active" type="button" data-preset="ShoulderFreedom">Shoulder</button>
+                        <button class="preset-button" type="button" data-preset="HappyHips">Hips</button>
+                        <button class="preset-button" type="button" data-preset="SpineReset">Spine</button>
+                    </div>
+
+                    <div class="two-column">
+                        <label class="field">
+                            <span>Duration</span>
+                            <select id="duration">
+                                <option value="45">45 min</option>
+                                <option value="60" selected>60 min</option>
+                                <option value="75">75 min</option>
+                            </select>
+                        </label>
+
+                        <label class="field">
+                            <span>Students</span>
+                            <input id="students" type="number" value="4" min="1" max="32">
+                        </label>
+                    </div>
+
+                    <label class="field">
+                        <span>Level</span>
+                        <select id="level">
+                            <option value="Beginner">Beginner</option>
+                            <option value="BeginnerIntermediate" selected>Beginner Intermediate</option>
+                            <option value="Intermediate">Intermediate</option>
+                            <option value="IntermediateAdvanced">Intermediate Advanced</option>
+                            <option value="Advanced">Advanced</option>
+                        </select>
+                    </label>
+                </section>
+
+                <section class="panel-section">
+                    <h2>Equipment</h2>
+                    <div class="toggle-row" id="equipment">
+                        <label class="toggle-chip active">
+                            <input type="checkbox" value="Reformer" checked>
+                            <span>Reformer</span>
+                        </label>
+                        <label class="toggle-chip active">
+                            <input type="checkbox" value="Chair" checked>
+                            <span>Chair</span>
+                        </label>
+                    </div>
+                    <p class="hint">Mat and Standing are used automatically for assessment, transfer, and retest phases.</p>
+                </section>
+
+                <section class="panel-section">
+                    <h2>Safety</h2>
+                    <label class="field">
+                        <span>Risk policy</span>
+                        <select id="risk-policy">
+                            <option value="Conservative" selected>Conservative</option>
+                            <option value="Balanced">Balanced</option>
+                        </select>
+                    </label>
+
+                    <div class="toggle-row compact" id="contraindications">
+                        <label class="toggle-chip"><input type="checkbox" value="wrist_pain"><span>Wrist pain</span></label>
+                        <label class="toggle-chip"><input type="checkbox" value="knee_pain"><span>Knee pain</span></label>
+                        <label class="toggle-chip"><input type="checkbox" value="low_back_pain"><span>Low back</span></label>
+                        <label class="toggle-chip"><input type="checkbox" value="high_blood_pressure"><span>High BP</span></label>
+                    </div>
+
+                    <label class="field">
+                        <span>Other contraindications</span>
+                        <input id="contra-extra" type="text" placeholder="acute_low_back_pain, ankle_instability">
+                    </label>
+                </section>
+
+                <section class="panel-section">
+                    <h2>Observations</h2>
+                    <textarea id="observations" rows="5">thoracic stiffness, limited overhead reach, desk workers</textarea>
+                    <button class="primary-button" id="generate-plan" type="button">Generate Plan</button>
+                    <p class="error-message" id="error-message" role="alert"></p>
+                </section>
+            </aside>
+
+            <main class="plan-panel" aria-live="polite">
+                <nav class="view-tabs" aria-label="Plan views">
+                    <button class="tab-button active" type="button" data-view="plan">Plan</button>
+                    <button class="tab-button" type="button" data-view="markdown">Markdown</button>
+                    <button class="tab-button" type="button" data-view="json">JSON</button>
+                </nav>
+
+                <section class="summary-band" id="summary-band"></section>
+                <section class="strategy-band" id="strategy-band"></section>
+                <section class="content-view" id="content-view"></section>
+            </main>
+        </div>
     </div>
 
     <script src="seed-data.js"></script>
     <script src="mps-engine.js"></script>
-    <script>
-        // Chip toggle
-        document.querySelectorAll('.chip').forEach(chip => {
-            const cb = chip.querySelector('input[type="checkbox"]');
-            // Sync initial state
-            if (cb && cb.checked) chip.classList.add('active');
-            chip.addEventListener('click', (e) => {
-                // Let the label naturally toggle the checkbox, then sync class
-                setTimeout(() => {
-                    chip.classList.toggle('active', cb.checked);
-                }, 0);
-            });
-        });
-
-        let currentPlan = null;
-        let currentMarkdown = '';
-
-        function generate() {
-            const btn = document.getElementById('generate-btn');
-            btn.disabled = true;
-            btn.textContent = '⏳ Generating...';
-
-            setTimeout(() => {
-                try {
-                    const request = {
-                        students: parseInt(document.getElementById('students').value),
-                        movement_experience: document.getElementById('experience').value,
-                        level: document.getElementById('level').value,
-                        equipment: Array.from(document.querySelectorAll('#equipment input[type="checkbox"]:checked')).map(i => i.value),
-                        duration_minutes: parseInt(document.getElementById('duration').value),
-                        observations: document.getElementById('observations').value.split(',').map(s => s.trim()).filter(Boolean),
-                        group_safety: {
-                            contraindications: document.getElementById('contra').value.split(',').map(s => s.trim()).filter(Boolean),
-                            risk_policy: document.getElementById('risk-policy').value
-                        }
-                    };
-
-                    currentPlan = generateClassPlan(request);
-                    currentMarkdown = renderMarkdown(currentPlan);
-                    renderView('rendered');
-                    document.getElementById('output').style.display = 'block';
-                    document.getElementById('output').scrollIntoView({ behavior: 'smooth' });
-                } catch (e) {
-                    alert('Error: ' + e.message);
-                } finally {
-                    btn.disabled = false;
-                    btn.textContent = '✨ Generate Class Plan';
-                }
-            }, 50);
-        }
-
-        function setView(view) {
-            document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
-            renderView(view);
-        }
-
-        function renderView(view) {
-            const content = document.getElementById('plan-content');
-            const stats = document.getElementById('stats');
-
-            if (view === 'markdown') {
-                content.style.whiteSpace = 'pre-wrap';
-                content.style.fontFamily = "'JetBrains Mono', monospace";
-                content.innerHTML = escapeHtml(currentMarkdown);
-                stats.innerHTML = '';
-            } else if (view === 'json') {
-                content.style.whiteSpace = 'pre-wrap';
-                content.style.fontFamily = "'JetBrains Mono', monospace";
-                content.innerHTML = escapeHtml(JSON.stringify(currentPlan, null, 2));
-                stats.innerHTML = '';
-            } else {
-                content.style.whiteSpace = 'normal';
-                content.style.fontFamily = 'inherit';
-                content.innerHTML = renderRichHTML(currentPlan);
-                stats.innerHTML = `
-                    <div class="stat"><div class="stat-value">${currentPlan.journey.length}</div><div class="stat-label">Phases</div></div>
-                    <div class="stat"><div class="stat-value">${currentPlan.duration_minutes}</div><div class="stat-label">Minutes</div></div>
-                    <div class="stat"><div class="stat-value">${currentPlan.journey.reduce((s,p) => s + p.exercises.length, 0)}</div><div class="stat-label">Exercises</div></div>
-                    <div class="stat"><div class="stat-value">${currentPlan.students}</div><div class="stat-label">Students</div></div>
-                `;
-            }
-        }
-
-        function renderRichHTML(plan) {
-            let html = '';
-            html += `<div style="margin-bottom:1.5rem">
-                <h3 style="font-size:1.3rem">${escapeHtml(plan.class_title)}</h3>
-                <p style="color:var(--text-dim);margin-top:0.3rem">Equipment: ${plan.equipment.join(', ')}</p>
-            </div>`;
-
-            // Strategy
-            html += `<h3 style="color:var(--accent-light);margin:1rem 0 0.5rem">Movement Strategy</h3>`;
-            html += `<p><strong>${plan.movement_strategy.primary_focus}</strong> primary · <strong>${plan.movement_strategy.secondary_focus}</strong> secondary</p>`;
-            html += `<div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin:0.8rem 0">`;
-            for (const [sys, val] of Object.entries(plan.movement_strategy.emphasis)) {
-                const pct = Math.round(val);
-                html += `<div style="background:var(--bg);border-radius:6px;padding:0.4rem 0.8rem;font-size:0.85rem">
-                    <span style="color:var(--accent-light)">${pct}%</span> ${escapeHtml(sys)}
-                </div>`;
-            }
-            html += `</div>`;
-
-            // Journey
-            for (const phase of plan.journey) {
-                html += `<div class="phase-header">
-                    <span class="phase-badge">${escapeHtml(phase.phase)}</span>
-                    <span style="color:var(--text-dim);font-size:0.85rem">${phase.target_duration_minutes} min — ${escapeHtml(phase.purpose)}</span>
-                </div>`;
-                for (const ex of phase.exercises) {
-                    html += `<div class="exercise-card">
-                        <div class="name">${escapeHtml(ex.name)}</div>
-                        <div class="meta">${ex.apparatus} · ${ex.duration_minutes} min · Role: ${ex.role}</div>
-                        <div class="meta">Objectives: ${ex.movement_objectives.map(o => escapeHtml(o)).join(', ')}</div>
-                        <div class="cues">${ex.teaching_cues.slice(0,2).map(c => `<div class="cue">${escapeHtml(c)}</div>`).join('')}</div>
-                        ${ex.safety_notes.length ? ex.safety_notes.map(n => `<span class="safety-badge">⚠️ ${escapeHtml(n)}</span>`).join('') : ''}
-                    </div>`;
-                }
-                if (phase.exercises.length === 0) {
-                    html += `<div style="color:var(--text-dim);font-size:0.85rem;padding:0.5rem 1rem;font-style:italic">No exercises selected for this phase</div>`;
-                }
-            }
-
-            // Safety
-            if (plan.safety_summary.excluded_exercises.length > 0) {
-                html += `<h3 style="color:var(--warning);margin:1.5rem 0 0.5rem">⚠️ Excluded Exercises</h3>`;
-                for (const ex of plan.safety_summary.excluded_exercises) {
-                    html += `<div class="safety-badge">${escapeHtml(ex.name)}: ${escapeHtml(ex.reason)}</div>`;
-                }
-            }
-
-            // Benchmark
-            html += `<h3 style="color:var(--accent-light);margin:1.5rem 0 0.5rem">📊 Benchmarks</h3>`;
-            for (const a of plan.benchmark.assessments) {
-                html += `<div class="exercise-card">
-                    <div class="name">${escapeHtml(a.name)}</div>
-                    <div class="meta">${escapeHtml(a.instruction)}</div>
-                    <div class="cues">${a.what_to_watch.map(w => `<div>👀 ${escapeHtml(w)}</div>`).join('')}</div>
-                </div>`;
-            }
-
-            return html;
-        }
-
-        function escapeHtml(s) {
-            const d = document.createElement('div');
-            d.textContent = s;
-            return d.innerHTML;
-        }
-
-        function copyOutput() {
-            navigator.clipboard.writeText(currentMarkdown).then(() => {
-                const btn = event.target;
-                btn.textContent = '✅ Copied!';
-                setTimeout(() => btn.textContent = '📋 Copy', 2000);
-            });
-        }
-    </script>
+    <script src="app.js"></script>
 </body>
 </html>
