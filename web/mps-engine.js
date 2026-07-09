@@ -218,12 +218,16 @@ function generateClassPlan(request) {
                 const maxNum = LEVEL_NUMERIC[ex.max_level];
                 return minNum <= levelNum && levelNum <= maxNum;
             })
+            .filter(ex => {
+                // Only include exercises matching selected equipment
+                const equip = request.equipment || [];
+                return equip.length === 0 || equip.includes(ex.equipment);
+            })
             .map(ex => ({
                 ex,
                 score: roleMatchScore(ex.roles, targetRole)
                     + difficultyFitScore(ex.difficulty, request.level)
                     + objectiveMatchScore(ex.objectives, strategy.preferred_exercise_objectives)
-                    + ((request.equipment || []).includes(ex.equipment) ? 5 : 0)
             }))
             .sort((a, b) => b.score - a.score);
 
