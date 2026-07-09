@@ -1,0 +1,16 @@
+{
+  "students": 5,
+  "movement_experience": "SpineReset",
+  "level": "Intermediate",
+  "equipment": ["Reformer", "Chair"],
+  "duration_minutes": 75,
+  "observations": [
+    "low back tension",
+    "limited rotation",
+    "weak core connection"
+  ],
+  "group_safety": {
+    "contraindications": ["acute_low_back_pain"],
+    "risk_policy": "Conservative"
+  }
+}

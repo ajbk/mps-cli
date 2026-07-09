@@ -1,0 +1,16 @@
+{
+  "students": 4,
+  "movement_experience": "ShoulderFreedom",
+  "level": "BeginnerIntermediate",
+  "equipment": ["Reformer", "Chair"],
+  "duration_minutes": 60,
+  "observations": [
+    "thoracic stiffness",
+    "limited overhead reach",
+    "office syndrome"
+  ],
+  "group_safety": {
+    "contraindications": ["wrist_pain"],
+    "risk_policy": "Conservative"
+  }
+}

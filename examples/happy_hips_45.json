@@ -1,0 +1,15 @@
+{
+  "students": 3,
+  "movement_experience": "HappyHips",
+  "level": "BeginnerIntermediate",
+  "equipment": ["Reformer", "Chair"],
+  "duration_minutes": 45,
+  "observations": [
+    "hip tightness",
+    "limited squat depth"
+  ],
+  "group_safety": {
+    "contraindications": ["knee_pain"],
+    "risk_policy": "Conservative"
+  }
+}
