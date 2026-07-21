@@ -5,3 +5,7 @@ output/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Private teacher reference photos and local visual-generation files.
+data/reference/private/
+visual/private/

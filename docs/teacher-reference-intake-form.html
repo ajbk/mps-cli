@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MPS Pilates Teacher Reference Form</title>
+    <style>
+        :root {
+            --bg: #f6f1eb;
+            --surface: #fffdf9;
+            --ink: #352c25;
+            --muted: #77695e;
+            --line: #decfbe;
+            --accent: #9d7653;
+            --accent-dark: #6f5038;
+            --soft: #f1e5d8;
+            --shadow: 0 12px 35px rgba(65, 46, 27, 0.10);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            line-height: 1.55;
+        }
+
+        .page {
+            width: min(900px, calc(100% - 28px));
+            margin: 28px auto 60px;
+        }
+
+        header,
+        section {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+        }
+
+        header {
+            padding: 28px;
+            margin-bottom: 18px;
+            border-top: 6px solid var(--accent);
+        }
+
+        h1, h2, h3 { line-height: 1.2; }
+        h1 { margin: 0 0 8px; font-size: clamp(26px, 5vw, 38px); }
+        h2 { margin: 0 0 18px; font-size: 22px; }
+        h3 { margin: 22px 0 10px; font-size: 17px; }
+        p { margin: 0 0 12px; }
+
+        .lead,
+        .hint,
+        .small {
+            color: var(--muted);
+        }
+
+        .lead { font-size: 16px; }
+        .small { font-size: 13px; }
+
+        section {
+            padding: 24px;
+            margin-bottom: 18px;
+        }
+
+        .notice {
+            padding: 14px 16px;
+            margin: 14px 0 0;
+            border-left: 4px solid var(--accent);
+            border-radius: 10px;
+            background: var(--soft);
+        }
+
+        .field-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        label.field {
+            display: grid;
+            gap: 6px;
+            font-weight: 700;
+        }
+
+        label.field.full { grid-column: 1 / -1; }
+
+        input[type="text"],
+        input[type="date"],
+        textarea {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px 12px;
+            color: var(--ink);
+            background: #fff;
+            font: inherit;
+        }
+
+        textarea { min-height: 84px; resize: vertical; }
+        input:focus, textarea:focus { outline: 3px solid rgba(157, 118, 83, 0.20); border-color: var(--accent); }
+
+        .choice-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .choice {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: #fff;
+            font-weight: 600;
+        }
+
+        .choice:has(input:checked) {
+            border-color: var(--accent);
+            background: var(--soft);
+        }
+
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 auto;
+            accent-color: var(--accent);
+        }
+
+        .photo-list {
+            display: grid;
+            gap: 9px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .photo-list li {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: #fff;
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 22px;
+        }
+
+        button {
+            min-height: 44px;
+            padding: 0 18px;
+            border: 0;
+            border-radius: 10px;
+            color: #fff;
+            background: var(--accent);
+            font: inherit;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        button:hover { background: var(--accent-dark); }
+        button.secondary { color: var(--ink); background: var(--soft); }
+
+        .footer-note {
+            text-align: center;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        @media (max-width: 620px) {
+            .page { width: min(100% - 16px, 900px); margin-top: 8px; }
+            header, section { padding: 18px; border-radius: 14px; }
+            .field-grid, .choice-grid { grid-template-columns: 1fr; }
+            label.field.full { grid-column: auto; }
+            .actions button { width: 100%; }
+        }
+
+        @media print {
+            body { background: #fff; }
+            .page { width: 100%; margin: 0; }
+            header, section { box-shadow: none; break-inside: avoid; }
+            .actions { display: none; }
+            input[type="text"], input[type="date"], textarea { border-color: #999; }
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <header>
+            <h1>MPS Pilates Teacher Reference Form</h1>
+            <p class="lead">แบบฟอร์มเก็บข้อมูลและภาพอ้างอิงของคุณครู เพื่อทำ Pilates flashcards ให้หน้า ชุด อุปกรณ์ และสตูดิโอมีความสม่ำเสมอทั้งชุด</p>
+            <p class="small">ใช้เวลาประมาณ 10-15 นาที ไม่ต้องกรอกศัพท์เทคนิคด้าน AI</p>
+            <div class="notice">
+                <strong>วิธีส่งข้อมูล</strong><br>
+                กรอกแบบฟอร์มนี้ แล้วกด “พิมพ์ / บันทึกเป็น PDF” หรือถ่ายภาพหน้าจอส่งกลับมาได้ ส่วนรูปคุณครู อุปกรณ์ และสตูดิโอ ให้ส่งแยกทาง LINE หรือ Google Drive
+            </div>
+        </header>
+
+        <form>
+            <section>
+                <h2>1. การอนุญาตใช้ภาพลักษณ์</h2>
+                <div class="field-grid">
+                    <label class="field">
+                        ชื่อคุณครู
+                        <input type="text" name="teacher-name">
+                    </label>
+                    <label class="field">
+                        ชื่อที่ต้องการให้ใช้ในเอกสารหรือระบบ
+                        <input type="text" name="display-name">
+                    </label>
+                </div>
+                <h3>โปรดยืนยัน</h3>
+                <div class="choice-grid">
+                    <label class="choice"><input type="checkbox"> ยินยอมให้ใช้ใบหน้า รูปร่าง ทรงผม และชุดเป็นภาพอ้างอิง</label>
+                    <label class="choice"><input type="checkbox"> ยินยอมให้ใช้ภาพที่สร้างขึ้นในสื่อการสอน เว็บไซต์ และเอกสารของ MPS</label>
+                    <label class="choice"><input type="checkbox"> รับทราบว่าภาพที่สร้างอาจเป็นภาพวาดหรือภาพประกอบที่ไม่เหมือนภาพถ่ายจริง 100%</label>
+                </div>
+            </section>
+
+            <section>
+                <h2>2. ภาพลักษณ์ของคุณครู</h2>
+                <p class="hint">เลือกความรู้สึกที่ต้องการให้ภาพสื่อได้ไม่เกิน 3 ข้อ</p>
+                <div class="choice-grid">
+                    <label class="choice"><input type="checkbox"> Professional — มืออาชีพ</label>
+                    <label class="choice"><input type="checkbox"> Warm — เป็นมิตร</label>
+                    <label class="choice"><input type="checkbox"> Calm — สงบ</label>
+                    <label class="choice"><input type="checkbox"> Precise — ใส่ใจ alignment</label>
+                    <label class="choice"><input type="checkbox"> Strong — แข็งแรง</label>
+                    <label class="choice"><input type="checkbox"> Energetic — มีพลัง</label>
+                    <label class="choice"><input type="checkbox"> Gentle — นุ่มนวลและปลอดภัย</label>
+                </div>
+                <div class="field-grid" style="margin-top: 16px">
+                    <label class="field">สีผิว<input type="text"></label>
+                    <label class="field">สีตา<input type="text"></label>
+                    <label class="field">สีผม<input type="text"></label>
+                    <label class="field">ทรงผม<input type="text"></label>
+                    <label class="field full">ลักษณะเด่นบนใบหน้าหรือร่างกาย<textarea></textarea></label>
+                    <label class="field full">สิ่งที่ไม่ต้องการให้ปรากฏในภาพ<textarea></textarea></label>
+                </div>
+            </section>
+
+            <section>
+                <h2>3. ชุดหลักสำหรับ flashcards</h2>
+                <div class="field-grid">
+                    <label class="field">เสื้อ<input type="text"></label>
+                    <label class="field">สีเสื้อ<input type="text"></label>
+                    <label class="field">กางเกง<input type="text"></label>
+                    <label class="field">สีกางเกง<input type="text"></label>
+                    <label class="field">ทรงผมขณะสอน<input type="text"></label>
+                    <label class="field">เครื่องประดับที่ต้องใส่เสมอ<input type="text"></label>
+                    <label class="field full">เครื่องประดับหรือสิ่งที่ห้ามใส่<textarea></textarea></label>
+                </div>
+                <h3>เท้า</h3>
+                <div class="choice-grid">
+                    <label class="choice"><input type="checkbox"> เท้าเปล่า</label>
+                    <label class="choice"><input type="checkbox"> ถุงเท้า Pilates</label>
+                    <label class="choice"><input type="checkbox"> อื่น ๆ</label>
+                </div>
+            </section>
+
+            <section>
+                <h2>4. สตูดิโอและบรรยากาศ</h2>
+                <p class="hint">เลือกสถานที่ที่ต้องการให้ปรากฏในภาพ</p>
+                <div class="choice-grid">
+                    <label class="choice"><input type="checkbox"> ใช้สตูดิโอจริงของคุณครู</label>
+                    <label class="choice"><input type="checkbox"> ใช้สตูดิโอกลางที่สะอาดและเรียบง่าย</label>
+                    <label class="choice"><input type="checkbox"> ใช้ทั้งสองแบบตามประเภทของ flashcard</label>
+                </div>
+                <h3>บรรยากาศ</h3>
+                <div class="choice-grid">
+                    <label class="choice"><input type="checkbox"> สว่างและอบอุ่น</label>
+                    <label class="choice"><input type="checkbox"> สะอาดและ minimal</label>
+                    <label class="choice"><input type="checkbox"> ธรรมชาติและผ่อนคลาย</label>
+                    <label class="choice"><input type="checkbox"> เข้มและ professional</label>
+                </div>
+                <label class="field" style="margin-top: 16px">รายละเอียดสตูดิโอที่ควรรักษาไว้<textarea></textarea></label>
+            </section>
+
+            <section>
+                <h2>5. อุปกรณ์</h2>
+                <p class="hint">เลือกอุปกรณ์ที่ต้องการให้ปรากฏในชุดภาพ</p>
+                <div class="choice-grid">
+                    <label class="choice"><input type="checkbox"> Reformer</label>
+                    <label class="choice"><input type="checkbox"> Chair</label>
+                    <label class="choice"><input type="checkbox"> Mat</label>
+                    <label class="choice"><input type="checkbox"> Magic Circle</label>
+                    <label class="choice"><input type="checkbox"> Small Ball</label>
+                    <label class="choice"><input type="checkbox"> Theraband</label>
+                </div>
+                <div class="field-grid" style="margin-top: 16px">
+                    <label class="field">Reformer ยี่ห้อหรือรุ่น<input type="text"></label>
+                    <label class="field">Reformer สีและวัสดุ<input type="text"></label>
+                    <label class="field">Chair ยี่ห้อหรือรุ่น<input type="text"></label>
+                    <label class="field">Chair สีและวัสดุ<input type="text"></label>
+                    <label class="field full">รายละเอียดอุปกรณ์ที่ต้องการให้เหมือนจริง<textarea></textarea></label>
+                </div>
+                <h3>โลโก้ยี่ห้อในภาพ</h3>
+                <div class="choice-grid">
+                    <label class="choice"><input type="checkbox"> แสดงได้</label>
+                    <label class="choice"><input type="checkbox"> ต้องลบออก</label>
+                    <label class="choice"><input type="checkbox"> ไม่สำคัญ</label>
+                </div>
+            </section>
+
+            <section>
+                <h2>6. Checklist รูปที่ต้องส่ง</h2>
+                <p class="hint">กรุณาส่งรูปที่ไม่มี filter แสงไม่มืด และเห็นรายละเอียดชัดเจน ไม่จำเป็นต้องถ่ายใหม่ทั้งหมดถ้ามีรูปที่ตรงตามรายการอยู่แล้ว</p>
+                <h3>ภาพคุณครู</h3>
+                <ul class="photo-list">
+                    <li><input type="checkbox"> ใบหน้าตรง สีหน้าปกติ</li>
+                    <li><input type="checkbox"> ใบหน้ามุม 3/4</li>
+                    <li><input type="checkbox"> ใบหน้าด้านข้าง</li>
+                    <li><input type="checkbox"> เต็มตัวด้านหน้า</li>
+                    <li><input type="checkbox"> เต็มตัวด้านข้าง</li>
+                    <li><input type="checkbox"> เต็มตัวด้านหลัง</li>
+                    <li><input type="checkbox"> ภาพขณะใส่ชุดหลัก</li>
+                </ul>
+                <h3>ภาพสถานที่และอุปกรณ์</h3>
+                <ul class="photo-list">
+                    <li><input type="checkbox"> Reformer มุมหน้าตรง</li>
+                    <li><input type="checkbox"> Reformer มุมด้านข้างหรือ 3/4</li>
+                    <li><input type="checkbox"> Chair มุมหน้าตรง</li>
+                    <li><input type="checkbox"> Chair มุมด้านข้างหรือ 3/4</li>
+                    <li><input type="checkbox"> สตูดิโอมุมกว้าง</li>
+                    <li><input type="checkbox"> รายละเอียดพื้น ผนัง และแสง</li>
+                </ul>
+                <div class="notice">กรุณาหลีกเลี่ยงภาพที่มีนักเรียนหรือบุคคลอื่นติดอยู่ในภาพ</div>
+            </section>
+
+            <section>
+                <h2>7. ความต้องการเพิ่มเติม</h2>
+                <div class="choice-grid">
+                    <label class="choice"><input type="checkbox"> ภาพสี่เหลี่ยมจัตุรัส 1:1</label>
+                    <label class="choice"><input type="checkbox"> เห็นท่าทางและอุปกรณ์ชัดเจน</label>
+                    <label class="choice"><input type="checkbox"> Educational illustration</label>
+                    <label class="choice"><input type="checkbox"> ไม่มีข้อความในภาพ</label>
+                    <label class="choice"><input type="checkbox"> ไม่มี watermark</label>
+                    <label class="choice"><input type="checkbox"> ไม่มีบุคคลอื่นในภาพ</label>
+                </div>
+                <label class="field" style="margin-top: 16px">ข้อกำหนดเพิ่มเติม<textarea></textarea></label>
+            </section>
+
+            <section>
+                <h2>8. ขั้นตอนหลังส่งข้อมูล</h2>
+                <p>หลังจากได้รับข้อมูลและภาพอ้างอิง MPS จะจัดทำตัวอย่างให้ตรวจสอบก่อน ได้แก่:</p>
+                <ul>
+                    <li>Teacher Character Sheet</li>
+                    <li>Outfit Sheet</li>
+                    <li>Equipment Sheet</li>
+                    <li>Location Sheet</li>
+                    <li>ภาพตัวอย่างมาตรฐาน 1-2 ใบ</li>
+                </ul>
+                <p>การสร้าง flashcards ทั้งชุดจะเริ่มหลังจากคุณครูยืนยันว่าตัวละคร ชุด อุปกรณ์ และบรรยากาศถูกต้องแล้ว</p>
+                <div class="field-grid">
+                    <label class="field">ลงชื่อ/ยืนยัน<input type="text"></label>
+                    <label class="field">วันที่<input type="date"></label>
+                </div>
+            </section>
+
+            <div class="actions">
+                <button type="button" onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button>
+                <button class="secondary" type="reset">ล้างแบบฟอร์ม</button>
+            </div>
+            <p class="footer-note">หลังกรอกเสร็จ ให้ส่ง PDF หรือภาพหน้าจอ พร้อมรูป reference แยกทาง LINE หรือ Google Drive</p>
+        </form>
+    </main>
+</body>
+</html>

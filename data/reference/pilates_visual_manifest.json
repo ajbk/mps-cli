@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "project": "MPS Pilates flashcards",
+  "policy": {
+    "privateSourceRule": "Source photos stay outside git; manifest stores only logical private:// asset IDs.",
+    "approvalRule": "Do not mark a flashcard approved until the canonical character sheet is approved.",
+    "generationRule": "Every generated card records the character, pose, outfit, and equipment references used."
+  },
+  "character": {
+    "id": "teacher-01",
+    "status": "needs-review",
+    "canonicalSheet": "visual/character/teacher-01-v1.png",
+    "fixedAttributes": {
+      "hair": "shoulder-length layered bob, dark brown-black, natural center part",
+      "glasses": "round dark frames",
+      "top": "white fitted Pilates top",
+      "bottom": "white fitted Pilates bottoms",
+      "body": "use the teacher reference pack as the authority for proportions; do not slim, lengthen, or stylize the body",
+      "rendering": "educational Pilates illustration, realistic anatomy, neutral professional pose"
+    },
+    "references": [
+      { "id": "face-front", "role": "face_identity", "source": "private://teacher-01/face-front", "required": true },
+      { "id": "body-front", "role": "full_body_front", "source": "private://teacher-01/full-body-front", "required": true },
+      { "id": "body-side", "role": "full_body_side", "source": "private://teacher-01/full-body-side", "required": true },
+      { "id": "body-back", "role": "full_body_back", "source": "private://teacher-01/full-body-back", "required": true },
+      { "id": "outfit-white", "role": "outfit", "source": "private://teacher-01/white-outfit", "required": true },
+      { "id": "cadillac-studio", "role": "equipment_context", "source": "private://studio/cadillac-reference", "required": true }
+    ]
+  },
+  "cards": []
+}
