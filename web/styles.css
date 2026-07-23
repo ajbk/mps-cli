@@ -925,6 +925,29 @@ td {
     min-height: 44px;
 }
 
+.flashcard-assistant {
+    margin-top: 16px;
+    padding: 14px 16px;
+    border: 1px solid #d8c5b6;
+    border-radius: var(--radius);
+    background: #fbf2e7;
+    color: var(--accent-dark);
+}
+
+.flashcard-assistant h4 {
+    margin: 0 0 8px;
+}
+
+.flashcard-assistant p {
+    margin: 8px 0 0;
+    line-height: 1.5;
+}
+
+.flashcard-assistant a {
+    color: var(--accent-dark);
+    font-weight: 850;
+}
+
 .flashcard-editor {
     margin-top: 20px;
     padding: 20px;
@@ -1065,6 +1088,38 @@ td {
 .review-actions p {
     margin: 10px 0;
     font-size: 13px;
+}
+
+.flashcard-findings {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 10px;
+    background: var(--panel-2);
+}
+
+.flashcard-findings h5 {
+    margin: 0;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.review-findings {
+    display: grid;
+    gap: 7px;
+    margin: 10px 0 0;
+    padding-left: 20px;
+}
+
+.review-findings li {
+    line-height: 1.45;
+}
+
+.finding-label {
+    color: var(--accent-dark);
+    font-size: 11px;
+    font-weight: 850;
+    text-transform: uppercase;
 }
 
 .flashcard-editor-empty {

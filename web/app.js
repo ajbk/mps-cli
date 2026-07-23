@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'mpsClientStudio.v2';
 const FLASHCARD_SELECTED_KEY = 'mps.flashcard.selectedDraftId';
+const FLASHCARD_BRIEF_PREFIX = 'mps.flashcard.brief.';
 
 function safeSelectedFlashcardRead() {
     try {
@@ -14,6 +15,23 @@ function safeSelectedFlashcardWrite(cardId) {
         localStorage.setItem(FLASHCARD_SELECTED_KEY, cardId);
     } catch (error) {
         // The flashcard editor remains usable when browser storage is blocked.
+    }
+}
+
+function safeBriefIdRead(cardId) {
+    try {
+        return localStorage.getItem(`${FLASHCARD_BRIEF_PREFIX}${cardId}`) || '';
+    } catch (error) {
+        return '';
+    }
+}
+
+function safeBriefIdWrite(cardId, briefId) {
+    try {
+        if (briefId) localStorage.setItem(`${FLASHCARD_BRIEF_PREFIX}${cardId}`, briefId);
+        else localStorage.removeItem(`${FLASHCARD_BRIEF_PREFIX}${cardId}`);
+    } catch (error) {
+        // Brief IDs are a convenience for the browser, not an authorization boundary.
     }
 }
 
@@ -130,6 +148,9 @@ const state = {
     flashcardQuery: '',
     flashcardLevel: 'all',
     selectedFlashcardId: safeSelectedFlashcardRead(),
+    flashcardLibrary: null,
+    flashcardError: '',
+    flashcardJobFindings: {},
     plan: null,
     markdown: '',
     data: loadData()
@@ -813,9 +834,36 @@ function flashcards() {
     return Array.isArray(window.MPS_FLASHCARDS) ? window.MPS_FLASHCARDS : [];
 }
 
-function filteredFlashcards() {
-    const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
-    return store.listCards({
+function flashcardStore() {
+    return window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
+}
+
+function apiFlashcardMode() {
+    return flashcardStore().isApiMode;
+}
+
+function flashcardSource(cardId) {
+    return flashcards().find((card) => card.id === cardId)
+        || (state.flashcardLibrary || []).find((card) => card.id === cardId || card.source_exercise_id === cardId)
+        || null;
+}
+
+function syncFlashcardLevels(cards) {
+    const levels = [...new Set(cards.map((card) => card.level).filter(Boolean))].sort((a, b) => {
+        return (flashcardLevelRank[a] || 99) - (flashcardLevelRank[b] || 99) || a.localeCompare(b);
+    });
+    const select = $('#flashcard-level');
+    if (!select) return;
+    const current = state.flashcardLevel;
+    select.innerHTML = '<option value="all">All levels</option>' + levels
+        .map((level) => `<option value="${escapeHtml(level)}">${escapeHtml(level)}</option>`)
+        .join('');
+    select.value = levels.includes(current) ? current : 'all';
+    if (!levels.includes(current)) state.flashcardLevel = 'all';
+}
+
+function filteredFlashcards(cards) {
+    return window.MPS_FLASHCARD_MODEL.filterCards(cards, {
         category: state.flashcardCategory,
         level: state.flashcardLevel,
         query: state.flashcardQuery
@@ -823,7 +871,20 @@ function filteredFlashcards() {
 }
 
 async function renderFlashcards() {
-    const cards = flashcards();
+    const store = flashcardStore();
+    let cards = store.isApiMode ? state.flashcardLibrary : flashcards();
+    if (store.isApiMode && !cards) {
+        try {
+            cards = await store.listCards();
+            state.flashcardLibrary = cards;
+            state.flashcardError = '';
+        } catch (error) {
+            cards = [];
+            state.flashcardError = error.message;
+        }
+    }
+    cards = Array.isArray(cards) ? cards : [];
+    syncFlashcardLevels(cards.length ? cards : flashcards());
     $('#flashcard-metrics').innerHTML = flashcardCategories.map((category) => {
         const count = cards.filter((card) => card.category === category).length;
         return `
@@ -838,16 +899,18 @@ async function renderFlashcards() {
         button.classList.toggle('active', button.dataset.flashcardCategory === state.flashcardCategory);
     });
 
-    const filtered = await filteredFlashcards();
-    $('#flashcard-result-count').textContent = `${filtered.length} of ${cards.length} cards`;
+    const filtered = filteredFlashcards(cards);
+    $('#flashcard-result-count').textContent = state.flashcardError
+        ? `Unable to load API cards: ${state.flashcardError}`
+        : `${filtered.length} of ${cards.length} cards`;
     $('#flashcard-deck').innerHTML = filtered.length
         ? filtered.map(renderFlashcard).join('')
-        : '<p class="muted">No flashcards match the current filters.</p>';
+        : `<p class="muted">${escapeHtml(state.flashcardError || 'No flashcards match the current filters.')}</p>`;
     await renderFlashcardEditor();
 }
 
 function renderFlashcard(card) {
-    const slug = card.category.toLowerCase();
+    const slug = String(card.category || card.apparatus || 'flashcard').toLowerCase().replace(/[^a-z0-9-]+/g, '-');
     const artClass = card.image ? 'flashcard-art has-image' : 'flashcard-art';
     const artStyle = card.image ? ` style="background-image: url('${safeAssetUrl(card.image)}')"` : '';
     const status = card.status ? window.MPS_FLASHCARD_MODEL.statusLabel(card.status) : 'Catalog';
@@ -881,17 +944,31 @@ function renderFlashcard(card) {
             </section>
             <footer class="flashcard-library-footer">
                 <span class="flashcard-status">${escapeHtml(status)}</span>
-                <button class="secondary create-flashcard" type="button" data-create-flashcard="${escapeHtml(card.id)}">Create card</button>
+                <button class="secondary create-flashcard" type="button" data-create-flashcard="${escapeHtml(card.id)}">${card.status ? 'Open card' : 'Create card'}</button>
             </footer>
         </article>
     `;
 }
 
 async function createFlashcardDraft(cardId) {
-    const sourceCard = flashcards().find((card) => card.id === cardId);
+    const store = flashcardStore();
+    const listedCard = (state.flashcardLibrary || []).find((card) => card.id === cardId);
+    const sourceCard = flashcardSource(cardId) || listedCard;
     if (!sourceCard) return;
 
-    const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
+    if (store.isApiMode) {
+        const existing = listedCard || (state.flashcardLibrary || []).find((card) =>
+            card.source_exercise_id === (sourceCard.source_exercise_id || sourceCard.id)
+        );
+        const draft = existing || await store.createDraft(sourceCard);
+        state.flashcardLibrary = (state.flashcardLibrary || []).filter((card) => card.id !== draft.id).concat(draft);
+        state.selectedFlashcardId = draft.id;
+        safeSelectedFlashcardWrite(draft.id);
+        await renderFlashcards();
+        showToast(existing ? `${sourceCard.name} card reopened` : `${sourceCard.name} draft created in MPS`);
+        return;
+    }
+
     const draftId = window.MPS_FLASHCARD_MODEL.draftKey(cardId);
     let existingDraft = await store.getCard(draftId);
     if (existingDraft) {
@@ -923,37 +1000,48 @@ async function createFlashcardDraft(cardId) {
 
 async function selectedFlashcardDraft() {
     if (!state.selectedFlashcardId) return null;
-    const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
+    const store = flashcardStore();
     const card = await store.getCard(state.selectedFlashcardId);
     const hydrated = window.MPS_FLASHCARD_REVIEW.hydrateTrustedDraft(
         card,
         state.selectedFlashcardId,
         canonicalSourceForCard(card)
     );
-    return hydrated ? store.saveDraft(hydrated) : card;
+    const selected = hydrated ? await store.saveDraft(hydrated) : card;
+    return selected?.id && state.flashcardJobFindings[selected.id]
+        ? { ...selected, review_findings: state.flashcardJobFindings[selected.id] }
+        : selected;
 }
 
 function canonicalSourceFromCatalogCard(source) {
     if (!source) return null;
     return {
-        exercise_id: source.id,
+        exercise_id: source.source_exercise_id || source.id,
         style_profile: window.MPS_FLASHCARD_REVIEW.visualContract.style_profile,
         name: source.name,
         category: source.category,
-        apparatus: source.category,
+        apparatus: source.apparatus || source.category,
         level: source.level,
         objective: source.objective || ''
     };
 }
 
 function canonicalSourceForCard(card) {
+    if (!card) return null;
     const draftPrefix = 'draft:';
     const trustedDraftId = state.selectedFlashcardId;
-    if (!window.MPS_FLASHCARD_REVIEW.matchesTrustedDraft(card, trustedDraftId)) return null;
-    if (!String(trustedDraftId || '').startsWith(draftPrefix)) return null;
-    return canonicalSourceFromCatalogCard(
-        flashcards().find((item) => item.id === trustedDraftId.slice(draftPrefix.length))
-    );
+    if (String(trustedDraftId || '').startsWith(draftPrefix)
+        && !window.MPS_FLASHCARD_REVIEW.matchesTrustedDraft(card, trustedDraftId)) return null;
+    const source = flashcardSource(card.source_exercise_id || String(trustedDraftId || '').slice(draftPrefix.length));
+    if (!source) return null;
+    return {
+        ...canonicalSourceFromCatalogCard(source),
+        apparatus: card.apparatus || source.apparatus || source.category,
+        category: card.category || source.category,
+        name: card.name || source.name,
+        level: card.level || source.level,
+        objective: card.objective || source.objective || ''
+    };
 }
 
 function editorTextArea(name, label, card) {
@@ -975,14 +1063,55 @@ function renderProposedChanges(card) {
     ).join('') + '</dl>';
 }
 
+function reviewFindings(card) {
+    const findings = card?.review_findings
+        || card?.findings
+        || card?.automated_review?.findings
+        || card?.latest_review?.findings
+        || [];
+    return flashcardStore().renderFindings(findings);
+}
+
+function chatGptInstructions(card) {
+    const source = canonicalSourceForCard(card) || {};
+    return `Connect the MPS Custom App in ChatGPT, then ask it to prepare a visual brief for ${card.name} (${source.exercise_id || card.source_exercise_id || card.id}). Keep mono-gesture-ink-pilates-v1, teacher-01, the locked off-white cropped camisole and charcoal mid-thigh biker shorts, and the subtle dusty-rose cheek accent. Ask ChatGPT to return the visual brief ID after saving it. Paste that ID into this card before generating.`;
+}
+
+function showChatGptInstructions(card) {
+    const target = $('#flashcard-assistant');
+    if (!target) return;
+    target.hidden = false;
+    target.innerHTML = '<h4>Ask ChatGPT for the visual brief</h4><p>' +
+        escapeHtml(chatGptInstructions(card)) +
+        '</p><p><a href="https://chatgpt.com/" target="_blank" rel="noopener">Open ChatGPT</a></p>';
+    target.focus();
+}
+
+function applyJobToCard(card, job) {
+    const findings = job?.review_findings || job?.output_json?.review?.findings || job?.output_json?.findings;
+    if (findings?.length && card?.id) state.flashcardJobFindings[card.id] = findings;
+    if (job?.error && card?.id) state.flashcardJobFindings[card.id] = [{
+        severity: 'error',
+        code: 'job_failed',
+        message: job.error
+    }];
+    return card?.id && state.flashcardJobFindings[card.id]
+        ? { ...card, review_findings: state.flashcardJobFindings[card.id] }
+        : card;
+}
+
 function renderFlashcardEditorForm(card) {
     const review = window.MPS_FLASHCARD_REVIEW;
     const canonicalSource = canonicalSourceForCard(card);
-    const canApprove = card.status === 'needs-review'
-        && review.automatedReviewPassed(card)
-        && review.sourceIsUnchanged(card, canonicalSource)
-        && review.visualContractMatches(card);
-    const canPublish = review.canPublish(card, canonicalSource);
+    const apiMode = apiFlashcardMode();
+    const canApprove = apiMode
+        ? card.status === 'needs-review'
+        : card.status === 'needs-review'
+            && review.automatedReviewPassed(card)
+            && review.sourceIsUnchanged(card, canonicalSource)
+            && review.visualContractMatches(card);
+    const canPublish = apiMode ? flashcardStore().canPublish(card) : false;
+    const briefId = safeBriefIdRead(card.id);
     const image = card.image
         ? '<img src="' + safeAssetUrl(card.image) + '" alt="Current visual for ' + escapeHtml(card.name) + '">'
         : '<div class="flashcard-image-empty">No image asset yet</div>';
@@ -998,10 +1127,11 @@ function renderFlashcardEditorForm(card) {
 
     return '<div class="flashcard-editor-head"><div><p class="eyebrow">Teacher review queue</p><h3>' +
         escapeHtml(card.name) + '</h3></div><span class="flashcard-status">' + escapeHtml(status) +
-        '</span></div><p class="flashcard-proposal-note">Generated values remain proposals until you explicitly save them. Publishing is unavailable in this browser.</p>' +
+        '</span></div><p class="flashcard-proposal-note">Generated values remain proposals until you explicitly save them. ' +
+        (apiMode ? 'MPS API state is authoritative; publishing is a teacher action.' : 'Static demo mode keeps publication disabled.') + '</p>' +
         '<form id="flashcard-editor-form" class="flashcard-editor-form"><section class="flashcard-editor-section"><h4>Workbook source · locked</h4>' +
         '<dl class="locked-fields"><div><dt>Exercise</dt><dd>' + escapeHtml(card.name) + '</dd></div><div><dt>Apparatus</dt><dd>' +
-        escapeHtml(card.category) + '</dd></div><div><dt>Level</dt><dd>' + escapeHtml(card.level) + '</dd></div><div><dt>Objective</dt><dd>' +
+        escapeHtml(card.apparatus || card.category) + '</dd></div><div><dt>Level</dt><dd>' + escapeHtml(card.level) + '</dd></div><div><dt>Objective</dt><dd>' +
         escapeHtml(card.objective || '-') + '</dd></div></dl></section><section class="flashcard-editor-section"><h4>Teacher-editable proposal</h4>' +
         editorTextArea('front', 'Front question', card) + editorTextArea('cue', 'Cue', card) +
         editorTextArea('regress', 'Regression', card) + editorTextArea('progress', 'Progression', card) +
@@ -1009,17 +1139,20 @@ function renderFlashcardEditorForm(card) {
         '<section class="flashcard-editor-section"><h4>AI proposal · unsaved</h4><p class="muted">These generated values are separate from the accepted fields above. Copy or adapt them manually, then save teacher changes.</p>' +
         renderProposedChanges(card) + '</section>' +
         '<section class="flashcard-editor-section visual-brief"><h4>Locked visual brief</h4><p><b>Style:</b> mono-gesture-ink-pilates-v1 · <b>Character:</b> teacher-01</p><pre>' +
-        escapeHtml(visualBrief) + '</pre></section><section class="flashcard-editor-section flashcard-asset-preview"><h4>Image asset · version ' +
+        escapeHtml(visualBrief) + '</pre>' + (apiMode ? '<label class="field"><span>Visual brief ID from ChatGPT</span><input id="flashcard-brief-id" type="text" value="' + escapeHtml(briefId) + '" placeholder="Paste the saved brief ID" aria-describedby="flashcard-brief-help"></label><p id="flashcard-brief-help" class="muted">ChatGPT/MCP creates the brief. The browser only stores its ID locally so the API can queue the job.</p>' : '') +
+        '</section><section class="flashcard-editor-section flashcard-asset-preview"><h4>Image asset · version ' +
         escapeHtml(card.version || 1) + '</h4>' + image + '</section><section class="flashcard-editor-section review-actions"><h4>Review controls</h4><p>Automated review: <b>' +
         escapeHtml(card.automated_review?.status || 'pending') + '</b> · Teacher review: <b>' +
-        escapeHtml(card.teacher_review?.status || 'not recorded') + '</b></p><div class="actions"><button type="button" data-flashcard-action="generate"' +
-        disabled(!['draft', 'revision-requested'].includes(card.status)) + '>Generate</button><button class="secondary" type="button" data-flashcard-action="generate"' +
-        disabled(card.status !== 'revision-requested') + '>Regenerate</button><button class="secondary" type="button" data-flashcard-action="request-revision"' +
-        disabled(!['needs-review', 'approved'].includes(card.status)) + '>Request revision</button><button class="secondary" type="button" data-flashcard-action="submit-review"' +
+        escapeHtml(card.teacher_review?.status || 'not recorded') + '</b></p><div class="actions"><button class="secondary" type="button" data-flashcard-action="ask-chatgpt">Ask ChatGPT</button><button type="button" data-flashcard-action="generate"' +
+        disabled(!['draft', 'revision-requested'].includes(card.status) || (apiMode && !briefId)) + ' title="' + escapeHtml(apiMode && !briefId ? 'Paste a visual brief ID from ChatGPT first' : '') + '">Generate</button><button class="secondary" type="button" data-flashcard-action="generate"' +
+        disabled(!apiMode || card.status !== 'revision-requested' || !briefId) + '>Regenerate</button><button class="secondary" type="button" data-flashcard-action="show-findings"' +
+        disabled(!card.review_findings?.length) + '>Show findings</button><button class="secondary" type="button" data-flashcard-action="request-revision"' +
+        disabled(apiMode || !['needs-review', 'approved'].includes(card.status)) + ' title="' + escapeHtml(apiMode ? 'The current API has no browser revision route' : '') + '">Request revision</button><button class="secondary" type="button" data-flashcard-action="submit-review"' +
         disabled(card.status !== 'generating') + '>Submit review</button><button class="secondary" type="button" data-flashcard-action="approve"' +
-        disabled(!canApprove) + '>Record teacher approval</button><button class="secondary" type="button" disabled title="Publishing must be performed by an authorized service">Publish (guarded)</button></div>' +
+        disabled(!canApprove) + '>Approve</button><button class="secondary" type="button" data-flashcard-action="publish"' +
+        disabled(!canPublish) + '>Publish</button></div><section id="flashcard-findings" class="flashcard-findings"><h5>Validation findings</h5>' + reviewFindings(card) + '</section>' +
         '<p class="muted">Publish guard: ' + (canPublish ? 'ready for an authorized publisher' : 'not eligible') +
-        '; it requires approved status, a passed latest automated review, a latest teacher review, and unchanged exercise/style sources.</p></section>';
+        '; the API remains the authority for approved status, current asset, and latest reviews.</p></section>';
 }
 
 async function renderFlashcardEditor() {
@@ -1042,7 +1175,10 @@ async function saveFlashcardEditor(form) {
         proposed_changes: null
     };
     const updated = window.MPS_FLASHCARD_REVIEW.invalidateTeacherEdits(accepted);
-    await window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).saveDraft(updated);
+    const saved = await flashcardStore().saveDraft(updated);
+    if (state.flashcardLibrary) {
+        state.flashcardLibrary = state.flashcardLibrary.map((item) => item.id === updated.id ? (saved || updated) : item);
+    }
     await renderFlashcardEditor();
     showToast('Teacher changes saved');
 }
@@ -1050,13 +1186,58 @@ async function saveFlashcardEditor(form) {
 async function applyFlashcardAction(action) {
     const card = await selectedFlashcardDraft();
     if (!card) return;
+    const store = flashcardStore();
+    if (action === 'ask-chatgpt') {
+        showChatGptInstructions(card);
+        return;
+    }
+    if (action === 'show-findings') {
+        const findings = $('#flashcard-findings');
+        if (findings) findings.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        return;
+    }
+    if (store.isApiMode) {
+        try {
+            let updated = card;
+            if (action === 'generate') {
+                const briefId = $('#flashcard-brief-id')?.value.trim() || safeBriefIdRead(card.id);
+                if (!briefId) throw new Error('Paste the visual brief ID returned by ChatGPT before generating');
+                safeBriefIdWrite(card.id, briefId);
+                const job = await store.createJob(card.id, {
+                    kind: card.status === 'revision-requested' ? 'regenerate' : 'generate',
+                    briefId
+                });
+                showToast(`Job ${job.id} queued; waiting for the visual worker`);
+                const completed = await store.pollJob(card.id, job.id);
+                updated = applyJobToCard(await store.getCard(card.id), completed) || card;
+                state.flashcardLibrary = (state.flashcardLibrary || []).map((item) => item.id === updated.id ? updated : item);
+            } else if (action === 'submit-review') {
+                updated = await store.submitReview(card.id);
+            } else if (action === 'approve') {
+                updated = await store.approve(card.id, { findings: card.review_findings || [] });
+            } else if (action === 'publish') {
+                updated = await store.publish(card.id);
+            } else if (action === 'request-revision') {
+                throw new Error('The current MPS API has no request-revision route; use ChatGPT/MCP and refresh the card');
+            }
+            if (updated) {
+                state.flashcardLibrary = (state.flashcardLibrary || []).map((item) => item.id === updated.id ? updated : item);
+            }
+            await renderFlashcards();
+            showToast(action === 'publish' ? 'Card published' : 'MPS state updated');
+        } catch (error) {
+            showToast(error.message);
+        }
+        return;
+    }
     const details = {
         canonicalSource: canonicalSourceForCard(card),
         ...(action === 'request-revision' ? { note: window.prompt('Revision request for this proposal:') || '' } : {})
     };
     try {
         const updated = window.MPS_FLASHCARD_REVIEW.transition(card, action, details);
-        await window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).saveDraft(updated);
+        if (action === 'publish') throw new Error('Publishing requires the authenticated MPS API');
+        await store.saveDraft(updated);
         await renderFlashcardEditor();
         showToast('Teacher action recorded');
     } catch (error) {

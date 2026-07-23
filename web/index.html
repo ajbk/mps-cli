@@ -419,9 +419,10 @@
                     <div class="flashcard-library-results">
                         <div class="flashcard-results-head">
                             <p id="flashcard-result-count" role="status"></p>
-                            <span>Local drafts retain the locked teacher and visual style.</span>
+                            <span>API mode keeps MPS state authoritative; static mode remains available for demos.</span>
                         </div>
                         <div id="flashcard-deck" class="flashcard-deck"></div>
+                        <section id="flashcard-assistant" class="flashcard-assistant" tabindex="-1" aria-live="polite" hidden></section>
                         <section id="flashcard-editor" class="flashcard-editor" aria-live="polite"></section>
                     </div>
                 </div>
@@ -429,6 +430,7 @@
         </main>
     </div>
 
+    <script>window.MPS_API_BASE = window.MPS_API_BASE || '';</script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="seed-data.js"></script>
     <script src="mps-engine.js"></script>
