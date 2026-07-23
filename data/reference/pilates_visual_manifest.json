@@ -1,6 +1,9 @@
 {
   "schemaVersion": 1,
   "project": "MPS Pilates flashcards",
+  "primaryStyleProfile": "mono-gesture-ink-pilates-v1",
+  "sourceWorkbook": "data/reference/MPS_Database_v1_Core.xlsx",
+  "derivedDataExport": "data/reference/mps_database_v1_core.json",
   "policy": {
     "privateSourceRule": "Source photos stay outside git; manifest stores only logical private:// asset IDs.",
     "approvalRule": "Do not mark a flashcard approved until the canonical character sheet is approved.",
@@ -9,23 +12,44 @@
   "character": {
     "id": "teacher-01",
     "status": "needs-review",
-    "canonicalSheet": "visual/character/teacher-01-v1.png",
+    "version": 5,
+    "outfit": "off-white thin-strap cropped Pilates camisole and dark charcoal high-waisted mid-thigh biker shorts",
+    "canonicalSheet": "data/reference/visual/character/teacher-01-v5-grid-outfit-draft.png",
     "fixedAttributes": {
+      "height": "167 cm",
+      "weight": "62 kg",
+      "bust": "34 in",
+      "waist": "29 in",
+      "hips": "37 in",
       "hair": "shoulder-length layered bob, dark brown-black, natural center part",
       "glasses": "round dark frames",
-      "top": "white fitted Pilates top",
-      "bottom": "white fitted Pilates bottoms",
-      "body": "use the teacher reference pack as the authority for proportions; do not slim, lengthen, or stylize the body",
-      "rendering": "educational Pilates illustration, realistic anatomy, neutral professional pose"
+      "top": "fitted off-white cropped Pilates camisole with thin straps",
+      "bottom": "dark charcoal high-waisted fitted Pilates biker shorts ending mid-thigh",
+      "body": "use the v5 measurements and teacher reference pack as the authority for proportions; do not slim, lengthen, or stylize the body",
+      "rendering": "realistic, attractive, confident adult woman; tasteful professional Pilates reference; natural anatomy; taller-looking vertical silhouette"
     },
     "references": [
       { "id": "face-front", "role": "face_identity", "source": "private://teacher-01/face-front", "required": true },
       { "id": "body-front", "role": "full_body_front", "source": "private://teacher-01/full-body-front", "required": true },
       { "id": "body-side", "role": "full_body_side", "source": "private://teacher-01/full-body-side", "required": true },
       { "id": "body-back", "role": "full_body_back", "source": "private://teacher-01/full-body-back", "required": true },
-      { "id": "outfit-white", "role": "outfit", "source": "private://teacher-01/white-outfit", "required": true },
+      { "id": "outfit-pilates-v1", "role": "outfit", "source": "private://teacher-01/pilates-outfit-v1", "required": true },
       { "id": "cadillac-studio", "role": "equipment_context", "source": "private://studio/cadillac-reference", "required": true }
     ]
   },
-  "cards": []
+  "cards": [
+    {
+      "id": "mat-m02-pelvic-clock-teacher-01-mono-v2",
+      "status": "needs-review",
+      "image": "web/assets/flashcard-images/mat/drafts/m02-pelvic-clock-teacher-01-mono-v2-pink-cheeks-draft.png",
+      "referenceIds": [
+        "face-front",
+        "body-front",
+        "outfit-pilates-v1"
+      ],
+      "styleProfile": "mono-gesture-ink-pilates-v1",
+      "exercise": "Mat: Pelvic Clock",
+      "reviewNotes": "Mono gesture-ink draft generated from character sheet v5 with a clean pelvis area, no arrows or diagram overlay, and a subtle dusty-rose pink cheek accent: verify face, shoulder-length layered bob, round glasses, off-white thin-strap crop top, dark charcoal mid-thigh biker shorts, body proportions, and neutral lumbar position."
+    }
+  ]
 }

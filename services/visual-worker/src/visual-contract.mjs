@@ -180,6 +180,12 @@ export function validateVisualManifest(manifest) {
   if (!isRecord(character)) return [...errors, 'manifest character must be an object'];
   if (character.id !== CHARACTER_ID) errors.push('manifest character must be teacher-01');
   if (character.status === 'rejected') errors.push('manifest character reference is rejected');
+  if (!Number.isInteger(character.version) || character.version < 1) {
+    errors.push('manifest character.version must be a positive integer');
+  }
+  if (character.outfit !== LOCKED_OUTFIT) {
+    errors.push('manifest character.outfit does not match the locked outfit');
+  }
   if (!isSafePublicPath(character.canonicalSheet)) {
     errors.push('manifest canonicalSheet must be a safe repo-relative public path');
   }

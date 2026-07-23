@@ -13,7 +13,6 @@ window.MPS_FLASHCARDS = [
     "regress": "lighter spring or smaller range",
     "progress": "add tempo changes or single-leg preparation",
     "search": "r01 reformer footwork: parallel heels footwork: parallel heels - what is the teaching purpose? beginner align feet, knees, hips, and pelvis under spring load lower-body training with trunk integration press through the whole heel without locking the knees lighter spring or smaller range add tempo changes or single-leg preparation",
-    "image": "assets/flashcard-images/reformer/r01-footwork-parallel-heels.png"
   },
   {
     "id": "R02",

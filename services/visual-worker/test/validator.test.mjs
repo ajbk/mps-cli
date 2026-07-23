@@ -10,6 +10,7 @@ import {
   assertValidVisualBrief,
   compileGenerationPayload,
   isSafeAssetPath,
+  loadVisualManifest,
 } from '../src/visual-contract.mjs';
 import {
   REQUIRED_VISUAL_CHECKS,
@@ -29,6 +30,7 @@ const manifest = {
     id: CHARACTER_ID,
     status: 'needs-review',
     version: 5,
+    outfit: LOCKED_OUTFIT,
     canonicalSheet: 'data/reference/visual/character/teacher-01-v5-grid-outfit-draft.png',
     fixedAttributes: {
       top: 'fitted off-white cropped Pilates camisole with thin straps',
@@ -114,6 +116,39 @@ function testPersistenceReporter(onRequest = () => {}) {
     },
   });
 }
+
+test('committed visual manifest satisfies the worker contract', async () => {
+  const committedManifest = await loadVisualManifest(
+    new URL('../../../data/reference/pilates_visual_manifest.json', import.meta.url),
+  );
+
+  assert.equal(committedManifest.primaryStyleProfile, STYLE_PROFILE);
+  assert.equal(committedManifest.character.id, CHARACTER_ID);
+  assert.equal(committedManifest.character.version, 5);
+  assert.equal(committedManifest.character.outfit, LOCKED_OUTFIT);
+  assert.equal(
+    committedManifest.character.fixedAttributes.top,
+    'fitted off-white cropped Pilates camisole with thin straps',
+  );
+  assert.equal(
+    committedManifest.character.fixedAttributes.bottom,
+    'dark charcoal high-waisted fitted Pilates biker shorts ending mid-thigh',
+  );
+  assert.deepEqual(
+    new Set(committedManifest.character.references.map((reference) => reference.role)),
+    new Set([
+      'face_identity',
+      'full_body_front',
+      'full_body_side',
+      'full_body_back',
+      'outfit',
+      'equipment_context',
+    ]),
+  );
+  assert.ok(committedManifest.character.references.every((reference) => (
+    reference.required === true && reference.source.startsWith('private://')
+  )));
+});
 
 test('rejects a brief that changes the visual style profile', () => {
   assert.throws(
