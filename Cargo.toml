@@ -3,6 +3,7 @@ members = [
   "crates/mps-core",
   "crates/mps-db",
   "crates/mps-cli",
+  "crates/mps-flashcards",
 ]
 resolver = "2"
 
