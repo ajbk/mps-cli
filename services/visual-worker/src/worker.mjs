@@ -2,10 +2,20 @@ import {
   assertSafeAssetPath,
   assertSafeIdentifier,
   compileGenerationPayload,
+  REQUIRED_VISUAL_CHECKS,
   validateReferenceAssets,
   VisualContractError,
 } from './visual-contract.mjs';
 import { reviewGeneratedAsset } from './validator.mjs';
+
+export class RetryablePersistenceError extends Error {
+  constructor() {
+    super('visual worker persistence is unavailable; retry the job');
+    this.name = 'RetryablePersistenceError';
+    this.code = 'visual_worker_persistence_retryable';
+    this.retryable = true;
+  }
+}
 
 function publicError(error) {
   if (error instanceof VisualContractError) {
@@ -60,6 +70,49 @@ export function createStatusReporter({ report }) {
   return async (event) => report(Object.freeze({ ...event }));
 }
 
+function sanitizedFinding(finding) {
+  const result = {
+    code: finding?.code === 'visual_check_failed' ? 'visual_check_failed' : 'visual_finding',
+    severity: finding?.severity === 'warning' ? 'warning' : 'error',
+  };
+  if (result.code === 'visual_check_failed' && REQUIRED_VISUAL_CHECKS.includes(finding?.check)) {
+    result.check = finding.check;
+  } else if (result.code === 'visual_check_failed') {
+    result.code = 'visual_finding';
+  }
+  return result;
+}
+
+async function postWorkerCallback({ fetchImpl, root, workerToken, path, payload, expectedStatus }) {
+  let response;
+  try {
+    response = await fetchImpl(new URL(path, root), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${workerToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new RetryablePersistenceError();
+  }
+  let body;
+  try {
+    if (!response || typeof response.json !== 'function') throw new Error('missing response body');
+    body = await response.json();
+  } catch {
+    throw new RetryablePersistenceError();
+  }
+  if (!response.ok || response.status !== 200) {
+    throw new RetryablePersistenceError();
+  }
+  if (body?.status !== expectedStatus) {
+    throw new RetryablePersistenceError();
+  }
+  return body;
+}
+
 export function createWorkerPersistenceReporter({ baseUrl, workerToken, fetchImpl = fetch }) {
   if (typeof baseUrl !== 'string' || baseUrl.trim() === '') throw new Error('worker persistence base URL is required');
   if (typeof workerToken !== 'string' || workerToken.trim() === '') throw new Error('worker persistence token is required');
@@ -97,28 +150,34 @@ export function createWorkerPersistenceReporter({ baseUrl, workerToken, fetchImp
         asset_id: assetId,
         passed: event.review.passed === true,
         findings_json: Array.isArray(event.review.findings)
-          ? event.review.findings.map((finding) => ({
-            code: 'visual_finding',
-            severity: finding?.severity === 'warning' ? 'warning' : 'error',
-          }))
+          ? event.review.findings.map(sanitizedFinding)
           : [],
       };
     }
-    const response = await fetchImpl(new URL(
-      `/api/internal/flashcards/${encodeURIComponent(cardId)}/jobs/${encodeURIComponent(jobId)}/complete`,
+    return postWorkerCallback({
+      fetchImpl,
       root,
-    ), {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${workerToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(payload),
+      workerToken,
+      path: `/api/internal/flashcards/${encodeURIComponent(cardId)}/jobs/${encodeURIComponent(jobId)}/complete`,
+      payload,
+      expectedStatus: event.status,
     });
-    if (!response?.ok) throw new Error('worker persistence request failed');
-    return undefined;
   };
   Object.defineProperty(reporter, 'durable', { value: true });
+  Object.defineProperty(reporter, 'claim', {
+    value: async ({ jobId, cardId }) => {
+      const safeCardId = assertSafeIdentifier(cardId, 'cardId');
+      const safeJobId = assertSafeIdentifier(jobId, 'jobId');
+      return postWorkerCallback({
+        fetchImpl,
+        root,
+        workerToken,
+        path: `/api/internal/flashcards/${encodeURIComponent(safeCardId)}/jobs/${encodeURIComponent(safeJobId)}/claim`,
+        payload: {},
+        expectedStatus: 'running',
+      });
+    },
+  });
   return reporter;
 }
 
@@ -200,6 +259,9 @@ export async function processVisualJob({
   if (typeof persistenceReporter !== 'function' || persistenceReporter.durable !== true) {
     throw new Error('a secure worker persistence reporter is required');
   }
+  if (typeof persistenceReporter.claim !== 'function') {
+    throw new Error('a secure worker claim reporter is required');
+  }
   const jobId = resolveJobIdentifier('jobId', [job?.id]);
   const cardId = resolveJobIdentifier('cardId', [job?.cardId, job?.card_id, job?.input_json?.card_id, job?.input?.card_id]);
   const briefId = resolveJobIdentifier('briefId', [
@@ -215,12 +277,13 @@ export async function processVisualJob({
       { code: 'ownership_mismatch', field: 'brief' },
     ]);
   }
+  await persistenceReporter.claim({ jobId, cardId });
   const status = createStatusReporter({ report });
   let persistenceAttempted = false;
 
   try {
     await emitStatus(status, { jobId, status: 'running' });
-    const referenceErrors = validateReferenceAssets(referenceAssets);
+    const referenceErrors = validateReferenceAssets(referenceAssets, undefined, manifest);
     if (referenceErrors.length > 0) {
       throw new VisualContractError('reference assets do not satisfy the asset policy', referenceErrors);
     }
@@ -256,7 +319,7 @@ export async function processVisualJob({
       review,
       generationPayload,
     };
-    if (persistenceReporter) {
+    try {
       await persistenceReporter({
         jobId,
         cardId,
@@ -265,6 +328,25 @@ export async function processVisualJob({
         review: result.review,
       });
       persistenceAttempted = true;
+    } catch {
+      persistenceAttempted = true;
+      const failure = {
+        jobId,
+        cardId,
+        status: 'failed',
+        cardStatus: 'revision-requested',
+        error: {
+          code: 'visual_worker_persistence_retryable',
+          message: 'visual worker persistence is unavailable; retry the job',
+        },
+      };
+      try {
+        await persistenceReporter(failure);
+      } catch {
+        throw new RetryablePersistenceError();
+      }
+      await emitStatus(status, failure);
+      return failure;
     }
     await emitStatus(status, {
       jobId,
@@ -275,6 +357,9 @@ export async function processVisualJob({
     });
     return result;
   } catch (error) {
+    if (error instanceof RetryablePersistenceError) {
+      throw error;
+    }
     const failure = {
       jobId,
       cardId,
@@ -282,12 +367,12 @@ export async function processVisualJob({
       cardStatus: 'revision-requested',
       error: publicError(error),
     };
-    if (persistenceReporter && !persistenceAttempted) {
+    if (!persistenceAttempted) {
       persistenceAttempted = true;
       try {
         await persistenceReporter(failure);
       } catch {
-        // The worker cannot safely expose callback/provider errors to clients.
+        throw new RetryablePersistenceError();
       }
     }
     await emitStatus(status, failure);

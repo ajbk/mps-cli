@@ -92,6 +92,7 @@ function isSafeRelativePath(value) {
     && value.length > 0
     && !/[\u0000-\u001F\u007F]/.test(value)
     && !value.includes('\\')
+    && !value.split('/').some((part) => part.length === 0)
     && !FORBIDDEN_PATH_PATTERNS.some((pattern) => pattern.test(value))
     && !pathHasTraversal(value)
     && posix.normalize(value) === value;
@@ -104,6 +105,7 @@ export function isSafeAssetPath(value, policy = DEFAULT_ASSET_POLICY) {
     const key = value.slice(objectPrefix.length);
     return key.length > 0
       && !key.includes('\\')
+      && !key.split('/').some((part) => part.length === 0)
       && !pathHasTraversal(key)
       && posix.normalize(key) === key;
   }
@@ -168,12 +170,6 @@ function canonicalExercise(exerciseContext) {
   return exerciseContext?.exercise ?? exerciseContext ?? {};
 }
 
-function referenceRolesFromManifest(manifest) {
-  return manifest.character.references
-    .filter((reference) => reference.required !== false)
-    .map((reference) => ({ id: reference.id, role: reference.role }));
-}
-
 export function validateVisualManifest(manifest) {
   const errors = [];
   if (!isRecord(manifest)) return ['manifest must be an object'];
@@ -217,7 +213,11 @@ export function validateVisualManifest(manifest) {
   return errors;
 }
 
-export function validateReferenceAssets(referenceAssets, policy = DEFAULT_ASSET_POLICY) {
+export function validateReferenceAssets(
+  referenceAssets,
+  policy = DEFAULT_ASSET_POLICY,
+  manifest = undefined,
+) {
   if (!isRecord(referenceAssets)) {
     return [{ code: 'invalid_reference_assets', field: 'referenceAssets' }];
   }
@@ -242,6 +242,19 @@ export function validateReferenceAssets(referenceAssets, policy = DEFAULT_ASSET_
     return errors;
   }
   const roles = new Set();
+  const ids = new Set();
+  const manifestReferences = isRecord(manifest?.character)
+    && Array.isArray(manifest.character.references)
+    ? manifest.character.references
+    : [];
+  const requiredManifestReferences = manifestReferences.filter((reference) => reference.required !== false);
+  const manifestByRole = new Map(manifestReferences.map((reference) => [reference.role, reference]));
+  if (manifestByRole.size > 0) {
+    const expectedCanonicalSheetId = `${manifest.character.id}-v${manifest.character.version}`;
+    if (canonicalSheet?.id !== expectedCanonicalSheetId) {
+      errors.push({ code: 'canonical_sheet_identity_mismatch', field: 'referenceAssets.canonicalSheet.id' });
+    }
+  }
   for (const [index, reference] of referenceAssets.references.entries()) {
     if (!isRecord(reference)) {
       errors.push({ code: 'invalid_reference_asset', field: `referenceAssets[${index}]` });
@@ -252,12 +265,29 @@ export function validateReferenceAssets(referenceAssets, policy = DEFAULT_ASSET_
       errors.push({ code: 'invalid_reference_asset', field: `referenceAssets[${index}]` });
     }
     roles.add(reference.role);
+    if (ids.has(reference.id)) {
+      errors.push({ code: 'duplicate_reference_id', field: `referenceAssets[${index}].id` });
+    }
+    ids.add(reference.id);
+    const manifestReference = manifestByRole.get(reference.role);
+    if (manifestByRole.size > 0 && !manifestReference) {
+      errors.push({ code: 'reference_role_not_in_manifest', field: `referenceAssets[${index}].role` });
+    } else if (manifestReference && reference.id !== manifestReference.id) {
+      errors.push({ code: 'reference_id_mismatch', field: `referenceAssets[${index}].id` });
+    }
     if (!isSafeAssetPath(path, policy)) {
       errors.push({ code: 'unsafe_reference_asset_path', field: `referenceAssets[${index}].path` });
     }
   }
   for (const role of REQUIRED_REFERENCE_ROLES) {
     if (!roles.has(role)) errors.push({ code: 'reference_role_missing', field: `referenceAssets.references.${role}` });
+  }
+  if (manifestByRole.size > 0) {
+    for (const reference of requiredManifestReferences) {
+      if (!roles.has(reference.role)) {
+        errors.push({ code: 'reference_role_missing', field: `referenceAssets.references.${reference.role}` });
+      }
+    }
   }
   return errors;
 }
@@ -322,7 +352,7 @@ function stringConstraints(value) {
 
 export function compileGenerationPayload({ brief, exerciseContext, manifest, referenceAssets }) {
   assertValidVisualBrief({ brief, exerciseContext, manifest });
-  const referenceErrors = validateReferenceAssets(referenceAssets);
+  const referenceErrors = validateReferenceAssets(referenceAssets, DEFAULT_ASSET_POLICY, manifest);
   if (referenceErrors.length > 0) {
     throw new VisualContractError('reference assets do not satisfy the asset policy', referenceErrors);
   }

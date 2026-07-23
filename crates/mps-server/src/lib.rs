@@ -39,6 +39,18 @@ pub const AUTOMATED_REVIEW: &str = "automated_review";
 pub const VISUAL_WORKER: &str = "visual_worker";
 pub const PUBLISH: &str = "publish";
 
+const WORKER_QA_CHECKS: &[&str] = &[
+    "pose",
+    "anatomy",
+    "identity",
+    "glasses_hair",
+    "outfit",
+    "apparatus",
+    "linework",
+    "cheek_accent",
+    "forbidden_overlays",
+];
+
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug)]
@@ -210,6 +222,10 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/flashcards/:id/jobs/:job_id",
             get(get_flashcard_job),
+        )
+        .route(
+            "/api/internal/flashcards/:id/jobs/:job_id/claim",
+            post(claim_visual_job),
         )
         .route(
             "/api/internal/flashcards/:id/jobs/:job_id/complete",
@@ -499,7 +515,18 @@ fn sanitize_worker_findings(value: &Value) -> Result<Value, ApiError> {
             } else {
                 "error"
             };
-            json!({"code": code, "severity": severity})
+            let check = if code == "visual_check_failed" {
+                finding
+                    .get("check")
+                    .and_then(Value::as_str)
+                    .filter(|check| WORKER_QA_CHECKS.contains(check))
+            } else {
+                None
+            };
+            match check {
+                Some(check) => json!({"code": code, "severity": severity, "check": check}),
+                None => json!({"code": code, "severity": severity}),
+            }
         })
         .collect::<Vec<_>>();
     let sanitized = Value::Array(sanitized);
@@ -828,6 +855,24 @@ async fn get_flashcard_job(
     .await?
     .ok_or_else(|| ApiError::not_found("flashcard job not found"))?;
     Ok(Json(job_response(job)))
+}
+
+async fn claim_visual_job(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((card_id, job_id)): Path<(String, String)>,
+) -> Result<Json<JobResponse>, ApiError> {
+    auth.require(VISUAL_WORKER)?;
+    if auth.actor_kind != AuditActorKind::System {
+        return Err(ApiError::forbidden("visual worker service identity is required"));
+    }
+    let studio_id = auth.studio_id;
+    let worker_id = auth.teacher_id;
+    let claimed = run_repository(state.repository.clone(), move |repository| {
+        repository.claim_job_for_worker(&studio_id, &worker_id, &card_id, &job_id)
+    })
+    .await?;
+    Ok(Json(job_response(claimed)))
 }
 
 async fn complete_visual_job(
@@ -1328,6 +1373,8 @@ fn repository_error(error: anyhow::Error) -> ApiError {
         || message.contains("cannot publish")
         || message.contains("cannot approve")
         || message.contains("cannot continue")
+        || message.contains("worker callback")
+        || message.contains("worker claim")
         || message.contains("UNIQUE constraint")
     {
         ApiError::conflict(message)
@@ -1908,6 +1955,41 @@ mod routes {
             &fixture.app,
             request(
                 Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/claim",
+                auth("studio-a"),
+                None,
+            ),
+        );
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let (status, body) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/claim",
+                visual_worker("studio-a"),
+                None,
+            ),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "running");
+
+        let (status, body) = send(
+            &fixture.app,
+            request(
+                Method::GET,
+                "/api/flashcards/card-a/jobs/job-a",
+                auth("studio-a"),
+                None,
+            ),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "running");
+
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
                 "/api/internal/flashcards/card-a/jobs/job-a/complete",
                 auth("studio-a"),
                 Some(json!({
@@ -1974,6 +2056,47 @@ mod routes {
                 .status,
             FlashcardStatus::NeedsReview
         );
+
+        let (status, body) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/complete",
+                visual_worker("studio-a"),
+                Some(json!({
+                    "status": "succeeded",
+                    "asset": {
+                        "id": "asset-a",
+                        "brief_id": "brief-a",
+                        "repo_path": "object://mps-flashcards/card-a-v1.png",
+                        "provider_job_id": "provider-a",
+                        "version": 99
+                    },
+                    "review": {
+                        "id": "review-a",
+                        "asset_id": "asset-a",
+                        "passed": true,
+                        "findings_json": []
+                    }
+                })),
+            ),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "succeeded");
+
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/complete",
+                visual_worker("studio-a"),
+                Some(json!({
+                    "status": "failed",
+                    "error_code": "image_generation_failed"
+                })),
+            ),
+        );
+        assert_eq!(status, StatusCode::CONFLICT);
     }
 
     #[test]
