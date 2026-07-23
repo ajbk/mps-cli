@@ -305,7 +305,7 @@ git commit -m "feat: persist flashcard production state"
 
 **Interfaces:**
 - Consumes: `window.MPS_FLASHCARDS` and the REST API shape from Task 6.
-- Produces: `filterCards(cards, filters)`, `statusLabel(status)`, `draftKey(cardId)`, `createLocalDraft(card)`, and store methods `listCards`, `getCard`, `saveDraft`.
+- Produces: `window.MPS_FLASHCARD_MODEL.filterCards(cards, filters)`, `statusLabel(status)`, `draftKey(cardId)`, `createLocalDraft(card)`, and `window.MPS_FLASHCARD_STORE` methods `listCards`, `getCard`, `saveDraft`.
 
 - [ ] **Step 1: Write pure model tests**
 
@@ -326,10 +326,12 @@ Expected: FAIL because the module does not exist.
 
 - [ ] **Step 2: Implement the model and store**
 
-Use a repository boundary:
+Keep the existing non-module browser loading model. `web/flashcard-model.js` must assign its pure functions to `window.MPS_FLASHCARD_MODEL`; `web/flashcard-store.js` must assign the store instance factory to `window.MPS_FLASHCARD_STORE`. The Node tests load these files in a VM with a fake `window` and assert the same namespace used by the browser.
+
+Use this repository boundary:
 
 ~~~js
-export function createFlashcardStore({
+window.MPS_FLASHCARD_STORE = function createFlashcardStore({
   apiBase = '',
   staticCards = [],
   storage = window.localStorage,
@@ -342,7 +344,7 @@ export function createFlashcardStore({
   };
   return {
     async listCards(filters = {}) {
-      if (!apiBase) return filterCards(staticCards, filters);
+      if (!apiBase) return window.MPS_FLASHCARD_MODEL.filterCards(staticCards, filters);
       const query = new URLSearchParams(filters).toString();
       return request(`/api/flashcards?${query}`);
     },
@@ -362,14 +364,14 @@ export function createFlashcardStore({
       });
     }
   };
-}
+};
 ~~~
 
 The fallback must keep the current static demo usable when no backend is configured.
 
-- [ ] **Step 3: Load the modules without changing class-plan behavior**
+- [ ] **Step 3: Load the scripts without changing class-plan behavior**
 
-Add the model/store scripts after `flashcards-data.js`, then replace the existing inline filtering calls in `app.js` with the pure model functions. Do not change `mps-engine.js`.
+Add the model/store scripts after `flashcards-data.js`, then replace the existing inline filtering calls in `app.js` with `window.MPS_FLASHCARD_MODEL` and `window.MPS_FLASHCARD_STORE`. Do not change `mps-engine.js`.
 
 - [ ] **Step 4: Run browser checks**
 
@@ -919,4 +921,3 @@ Record:
 - known provider limitations.
 
 ~~~
-
