@@ -4,8 +4,10 @@ Use these cards to quickly reload the project model before coding or reviewing.
 
 For exercise-teaching cards grouped by Reformer, Mat, Stand / Standing, and
 Chair, see [Pilates Exercise Flashcards](EXERCISE_FLASHCARDS.md).
-For the generated printable deck with cartoon artwork, open
+For the generated printable deck, open
 [Exercise Flashcard Deck](exercise-flashcard-deck.html).
+
+For the current production contract, see [Flashcard source of truth](FLASHCARD_SOURCE_OF_TRUTH.md).
 
 ## Domain
 

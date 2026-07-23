@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "project": "MPS Pilates flashcards",
+  "primaryProfile": "mono-gesture-ink-pilates-v1",
+  "profiles": [
+    {
+      "id": "mono-gesture-ink-pilates-v1",
+      "status": "needs-review",
+      "purpose": "The single visual language for MPS Pilates flashcards, quote cards, and movement sheets.",
+      "styleReference": "private://style/mono-gesture-ink-pilates-reference-01",
+      "previewAsset": "data/reference/visual/style-sheets/mono-gesture-ink-pilates-v1.png",
+      "characterReference": "teacher-01",
+      "visualLanguage": {
+        "medium": "hand-drawn ink and pencil gesture illustration",
+        "linework": "imperfect organic lines, varied pressure, visible dry-brush texture",
+        "anatomy": "elongated expressive gesture with believable joints and readable contact points",
+        "facialDetail": "few ink marks; preserve glasses, hair silhouette, and profile identity",
+        "lighting": "white paper with sparse charcoal shadow blocks",
+        "mood": "quiet, poetic, intimate, reflective, lightly humorous"
+      },
+      "composition": {
+        "defaultCanvas": "portrait 1:1 or 4:5",
+        "sheetCanvas": "landscape 3:2",
+        "background": "clean white paper",
+        "subjectScale": "one dominant gesture with generous negative space",
+        "apparatus": "thin hand-drawn geometry; simplify only after preserving contact and load direction",
+        "text": "no text in artwork; optional quote text belongs in a separate quote-card layer"
+      },
+      "palette": {
+        "paper": "#FFFFFF",
+        "ink": "#292526",
+        "charcoal": "#3B3739",
+        "warmGray": "#B9B3AE",
+        "skinAccent": "#D7B7A0",
+        "cheekAccent": "#D98F9A",
+        "top": "#F2EEE4",
+        "bottom": "#343238"
+      },
+      "lockedCharacterRules": [
+        "Use the approved or currently reviewed teacher-01 character reference.",
+        "Preserve the shoulder-length layered bob and round dark glasses.",
+        "Preserve the teacher's real body proportions; elongation is a gesture style, not a body redesign.",
+        "Current outfit: off-white thin-strap cropped Pilates camisole and dark charcoal high-waisted mid-thigh biker shorts.",
+        "Add a subtle natural dusty-rose pink tint to both cheeks; keep it soft and integrated with the ink and pencil linework.",
+        "Use the current canonical character sheet version recorded in the manifest.",
+        "Do not import a style reference person's face, hair, clothing, or body proportions."
+      ],
+      "panelTemplates": [
+        { "panel": 1, "role": "expressive_seated", "description": "seated side gesture with quiet negative space" },
+        { "panel": 2, "role": "standing_balance", "description": "single-leg balance or long-line standing gesture" },
+        { "panel": 3, "role": "profile_silhouette", "description": "clean side profile with readable hair and glasses" },
+        { "panel": 4, "role": "mat_gesture", "description": "one Mat movement drawn with clear body landmarks" },
+        { "panel": 5, "role": "reformer_gesture", "description": "Reformer pose with thin apparatus lines and preserved contact" },
+        { "panel": 6, "role": "cadillac_gesture", "description": "Cadillac pose with spare bars, straps, and expressive line" }
+      ],
+      "negativePrompt": [
+        "photorealism",
+        "smooth vector art",
+        "clean 3D render",
+        "heavy uniform outlines",
+        "full-color palette",
+        "gradient background",
+        "text or labels",
+        "logo or watermark",
+        "outfit variation",
+        "strong makeup blush",
+        "white pants",
+        "full-length black leggings",
+        "anatomy distortion",
+        "extra limbs"
+      ],
+      "reviewChecklist": [
+        "Does the image read as hand-drawn rather than vector or photorealistic?",
+        "Are the lines imperfect but intentional?",
+        "Does the same teacher identity remain recognizable?",
+        "Does the exact MPS outfit remain unchanged?",
+        "Is the pink cheek tint subtle, symmetrical, and consistent without turning the artwork into a full-color style?",
+        "Is there generous white negative space?",
+        "Are contact points and apparatus lines still understandable?"
+      ]
+    }
+  ]
+}

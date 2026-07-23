@@ -1,7 +1,10 @@
 # MPS Database v1 Integration
 
-`data/reference/mps_database_v1_core.json` is the project-ready staging export
-of `MPS_Database_v1_Core.xlsx`.
+`data/reference/MPS_Database_v1_Core.xlsx` is the canonical exercise source for
+MPS flashcards and future database curation. The JSON file at
+`data/reference/mps_database_v1_core.json` is a derived, machine-readable export
+of that workbook for app and validation workflows. It must not become a second
+manually edited source.
 
 ## What is included
 
@@ -14,7 +17,7 @@ of `MPS_Database_v1_Core.xlsx`.
 - source row and source page references for auditability
 - parsed arrays for multi-value fields such as family IDs and source pages
 
-## Why this is staging data
+## Why the JSON is a derived export
 
 The workbook has a rich reference taxonomy, but the MPS generator's canonical
 `exercises` table also requires fields that are currently blank in
@@ -22,9 +25,10 @@ The workbook has a rich reference taxonomy, but the MPS generator's canonical
 level bounds, difficulty, duration, cues, regressions, progressions, and safety
 constraints.
 
-The JSON therefore preserves the source data without inventing those values.
-It is ready for curation and later transformation into the canonical SQLite
-seed. The existing `data/seed/mps_seed.sql` remains unchanged until that
+The export preserves the workbook data without inventing those values. It is
+ready for curation and later transformation into the canonical SQLite seed.
+When the workbook changes, regenerate the JSON export rather than editing it by
+hand. The existing `data/seed/mps_seed.sql` remains unchanged until that
 curation is complete.
 
 ## Apparatus mapping
