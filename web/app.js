@@ -924,7 +924,7 @@ function renderFlashcard(card) {
     const canonicalSourceId = card.source_exercise_id || card.api_source_exercise_id || null;
     const canCreate = Boolean(card.status || !apiMode || canonicalSourceId);
     const slug = String(card.category || card.apparatus || 'flashcard').toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-    const catalogImage = card.catalog_image || (!card.status ? card.image : null);
+    const catalogImage = card.status ? null : (card.catalog_image || card.image || null);
     const artImage = card.image || catalogImage;
     const artClass = artImage ? 'flashcard-art has-image' : 'flashcard-art';
     const artStyle = artImage ? ` style="background-image: url('${safeAssetUrl(artImage)}')"` : '';

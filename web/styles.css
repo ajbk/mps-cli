@@ -872,26 +872,7 @@ td {
     height: 72px;
     border: 1px solid var(--line);
     border-radius: 12px;
-    background-image: url("assets/pilates-flashcard-cartoon.png");
-    background-size: 200% 200%;
-    background-repeat: no-repeat;
     background-color: var(--field);
-}
-
-.flashcard-reformer .flashcard-art {
-    background-position: 0 0;
-}
-
-.flashcard-mat .flashcard-art {
-    background-position: 100% 0;
-}
-
-.flashcard-stand .flashcard-art {
-    background-position: 0 100%;
-}
-
-.flashcard-chair .flashcard-art {
-    background-position: 100% 100%;
 }
 
 .flashcard-art.has-image {

@@ -546,7 +546,6 @@ window.MPS_FLASHCARDS = [
     "regress": "tiny range",
     "progress": "add breath rhythm",
     "search": "m02 mat pelvic clock pelvic clock - what does it assess? beginner pelvic awareness and lumbar mobility precision through small movement move the pelvis like a dial, not the legs tiny range add breath rhythm",
-    "image": "assets/flashcard-images/mat/drafts/m02-pelvic-clock-teacher-01-mono-v2-pink-cheeks-draft.png"
   },
   {
     "id": "M03",
