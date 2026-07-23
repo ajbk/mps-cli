@@ -2,13 +2,15 @@ use std::env;
 
 use anyhow::{Context, Result};
 use axum::extract::{Request, State};
-use axum::http::{header::AUTHORIZATION, StatusCode};
+use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use mps_server::{
     app, AppState, AuthContext, ServerConfig, AUTOMATED_REVIEW, DEFAULT_CATALOG_EXPORT_PATH,
+    GENERATE_ASSET, READ_CATALOG, SUBMIT_REVIEW, WRITE_DRAFT,
 };
+use mps_db::AuditActorKind;
 use serde_json::json;
 
 #[derive(Clone)]
@@ -17,6 +19,7 @@ struct StaticTokenAuth {
     teacher_context: AuthContext,
     automated_review_bearer_token: String,
     automated_review_context: AuthContext,
+    mcp_service_bearer_token: String,
 }
 
 #[tokio::main]
@@ -47,6 +50,12 @@ async fn main() -> Result<()> {
     if teacher_bearer_token == automated_review_bearer_token {
         anyhow::bail!("MPS_AUTH_TOKEN and MPS_AUTOMATED_REVIEW_TOKEN must differ");
     }
+    let mcp_service_bearer_token = required_env("MPS_MCP_SERVICE_TOKEN")?;
+    if mcp_service_bearer_token == teacher_bearer_token
+        || mcp_service_bearer_token == automated_review_bearer_token
+    {
+        anyhow::bail!("MPS_MCP_SERVICE_TOKEN must differ from human and review service tokens");
+    }
     let auth = StaticTokenAuth {
         teacher_bearer_token,
         teacher_context: AuthContext::new(
@@ -60,6 +69,7 @@ async fn main() -> Result<()> {
             required_env("MPS_AUTOMATED_REVIEW_SERVICE_ID")?,
             [AUTOMATED_REVIEW],
         ),
+        mcp_service_bearer_token,
     };
     let state = tokio::task::spawn_blocking(move || AppState::load(&config))
         .await
@@ -90,16 +100,39 @@ async fn authenticate(
         Some(token) if token == auth.automated_review_bearer_token.as_str() => {
             auth.automated_review_context
         }
-        _ => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": {"status": 401, "message": "invalid bearer token"}})),
-            )
-                .into_response()
+        Some(token) if token == auth.mcp_service_bearer_token.as_str() => {
+            match mcp_identity(request.headers()) {
+                Some((studio_id, teacher_id)) => AuthContext::new(
+                    studio_id,
+                    teacher_id,
+                    [READ_CATALOG, WRITE_DRAFT, GENERATE_ASSET, SUBMIT_REVIEW],
+                )
+                .with_actor_kind(AuditActorKind::Chatgpt),
+                None => return unauthorized(),
+            }
         }
+        _ => return unauthorized(),
     };
     request.extensions_mut().insert(context);
     next.run(request).await
+}
+
+fn mcp_identity(headers: &HeaderMap) -> Option<(String, String)> {
+    if headers.get("x-mps-actor-kind")?.to_str().ok()? != "chatgpt" {
+        return None;
+    }
+    let studio_id = headers.get("x-mps-studio-id")?.to_str().ok()?.trim();
+    let teacher_id = headers.get("x-mps-teacher-id")?.to_str().ok()?.trim();
+    (!studio_id.is_empty() && !teacher_id.is_empty())
+        .then(|| (studio_id.to_owned(), teacher_id.to_owned()))
+}
+
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error": {"status": 401, "message": "invalid bearer token"}})),
+    )
+        .into_response()
 }
 
 fn required_env(name: &str) -> Result<String> {

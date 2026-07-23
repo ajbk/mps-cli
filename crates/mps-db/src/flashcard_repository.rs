@@ -571,11 +571,22 @@ impl FlashcardRepository {
         teacher_id: &str,
         card: &FlashcardCard,
     ) -> Result<FlashcardCard> {
+        self.create_flashcard_for_actor(studio_id, teacher_id, AuditActorKind::Teacher, card)
+    }
+
+    pub fn create_flashcard_for_actor(
+        &self,
+        studio_id: &str,
+        teacher_id: &str,
+        actor_kind: AuditActorKind,
+        card: &FlashcardCard,
+    ) -> Result<FlashcardCard> {
         require_identity("studio", studio_id)?;
         require_identity("teacher", teacher_id)?;
         validate_new_draft(card, &self.catalog).map_err(|error| anyhow!(error))?;
         let studio_id = studio_id.to_owned();
         let teacher_id = teacher_id.to_owned();
+        let actor_kind = actor_kind.clone();
         let card = card.clone();
         let now = timestamp();
         self.runtime.block_on(async {
@@ -597,7 +608,7 @@ impl FlashcardRepository {
             record_audit_in_transaction(
                 &mut transaction,
                 &card.id,
-                AuditActorKind::Teacher,
+                actor_kind,
                 Some(&teacher_id),
                 "flashcard.created",
                 json!({
@@ -711,6 +722,17 @@ impl FlashcardRepository {
         card_id: &str,
         patch: FlashcardPatch,
     ) -> Result<FlashcardCard> {
+        self.update_flashcard_for_actor(studio_id, teacher_id, AuditActorKind::Teacher, card_id, patch)
+    }
+
+    pub fn update_flashcard_for_actor(
+        &self,
+        studio_id: &str,
+        teacher_id: &str,
+        actor_kind: AuditActorKind,
+        card_id: &str,
+        patch: FlashcardPatch,
+    ) -> Result<FlashcardCard> {
         require_identity("studio", studio_id)?;
         require_identity("teacher", teacher_id)?;
         if patch.category.is_none() && patch.teaching_copy_json.is_none() {
@@ -718,6 +740,7 @@ impl FlashcardRepository {
         }
         let studio_id = studio_id.to_owned();
         let teacher_id = teacher_id.to_owned();
+        let actor_kind = actor_kind.clone();
         let card_id = card_id.to_owned();
         self.runtime.block_on(async {
             let mut transaction = self.pool.begin().await?;
@@ -746,7 +769,7 @@ impl FlashcardRepository {
             record_audit_in_transaction(
                 &mut transaction,
                 &card_id,
-                AuditActorKind::Teacher,
+                actor_kind,
                 Some(&teacher_id),
                 "flashcard.updated",
                 json!({
@@ -796,6 +819,16 @@ impl FlashcardRepository {
         teacher_id: &str,
         brief: &VisualBrief,
     ) -> Result<()> {
+        self.save_visual_brief_for_actor(studio_id, teacher_id, AuditActorKind::Teacher, brief)
+    }
+
+    pub fn save_visual_brief_for_actor(
+        &self,
+        studio_id: &str,
+        teacher_id: &str,
+        actor_kind: AuditActorKind,
+        brief: &VisualBrief,
+    ) -> Result<()> {
         require_identity("studio", studio_id)?;
         require_identity("teacher", teacher_id)?;
         validate_visual_brief(brief).map_err(|error| anyhow!(error))?;
@@ -806,6 +839,7 @@ impl FlashcardRepository {
         }
         let studio_id = studio_id.to_owned();
         let teacher_id = teacher_id.to_owned();
+        let actor_kind = actor_kind.clone();
         let brief = brief.clone();
         self.runtime.block_on(async {
             let mut transaction = self.pool.begin().await?;
@@ -830,7 +864,7 @@ impl FlashcardRepository {
             record_audit_in_transaction(
                 &mut transaction,
                 &brief.card_id,
-                AuditActorKind::Teacher,
+                actor_kind,
                 Some(&teacher_id),
                 "visual_brief.saved",
                 json!({
@@ -866,10 +900,21 @@ impl FlashcardRepository {
         teacher_id: &str,
         job: &FlashcardJob,
     ) -> Result<()> {
+        self.create_job_for_actor(studio_id, teacher_id, AuditActorKind::Teacher, job)
+    }
+
+    pub fn create_job_for_actor(
+        &self,
+        studio_id: &str,
+        teacher_id: &str,
+        actor_kind: AuditActorKind,
+        job: &FlashcardJob,
+    ) -> Result<()> {
         require_identity("studio", studio_id)?;
         require_identity("teacher", teacher_id)?;
         let studio_id = studio_id.to_owned();
         let teacher_id = teacher_id.to_owned();
+        let actor_kind = actor_kind.clone();
         let job = job.clone();
         self.runtime.block_on(async {
             let mut transaction = self.pool.begin().await?;
@@ -929,7 +974,7 @@ impl FlashcardRepository {
             record_audit_in_transaction(
                 &mut transaction,
                 &job.card_id,
-                AuditActorKind::Teacher,
+                actor_kind.clone(),
                 Some(&teacher_id),
                 "flashcard_job.created",
                 json!({
@@ -951,7 +996,7 @@ impl FlashcardRepository {
                 record_audit_in_transaction(
                     &mut transaction,
                     &job.card_id,
-                    AuditActorKind::Teacher,
+                    actor_kind,
                     Some(&teacher_id),
                     "flashcard.status_transitioned",
                     json!({
@@ -1156,6 +1201,17 @@ impl FlashcardRepository {
         card_id: &str,
         next: FlashcardStatus,
     ) -> Result<()> {
+        self.transition_status_for_actor(studio_id, teacher_id, AuditActorKind::Teacher, card_id, next)
+    }
+
+    pub fn transition_status_for_actor(
+        &self,
+        studio_id: &str,
+        teacher_id: &str,
+        actor_kind: AuditActorKind,
+        card_id: &str,
+        next: FlashcardStatus,
+    ) -> Result<()> {
         require_identity("studio", studio_id)?;
         require_identity("teacher", teacher_id)?;
         if matches!(next, FlashcardStatus::Approved | FlashcardStatus::Published) {
@@ -1165,6 +1221,7 @@ impl FlashcardRepository {
         }
         let studio_id = studio_id.to_owned();
         let teacher_id = teacher_id.to_owned();
+        let actor_kind = actor_kind.clone();
         let card_id = card_id.to_owned();
         self.runtime.block_on(async {
             let mut transaction = self.pool.begin().await?;
@@ -1184,7 +1241,7 @@ impl FlashcardRepository {
             record_audit_in_transaction(
                 &mut transaction,
                 &card_id,
-                AuditActorKind::Teacher,
+                actor_kind,
                 Some(&teacher_id),
                 "flashcard.status_transitioned",
                 json!({

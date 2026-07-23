@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{async_trait, Json, Router};
 use mps_db::{
-    FlashcardJob, FlashcardJobKind, FlashcardJobStatus, FlashcardListFilter, FlashcardPatch,
+    AuditActorKind, FlashcardJob, FlashcardJobKind, FlashcardJobStatus, FlashcardListFilter, FlashcardPatch,
     FlashcardRepository, FlashcardReview, ReviewerKind,
 };
 use mps_flashcards::{
@@ -44,6 +44,7 @@ pub struct AuthContext {
     pub studio_id: String,
     pub teacher_id: String,
     pub permissions: BTreeSet<String>,
+    pub actor_kind: AuditActorKind,
 }
 
 impl AuthContext {
@@ -60,7 +61,13 @@ impl AuthContext {
             studio_id: studio_id.into(),
             teacher_id: teacher_id.into(),
             permissions: permissions.into_iter().map(Into::into).collect(),
+            actor_kind: AuditActorKind::Teacher,
         }
+    }
+
+    pub fn with_actor_kind(mut self, actor_kind: AuditActorKind) -> Self {
+        self.actor_kind = actor_kind;
+        self
     }
 
     fn require(&self, permission: &str) -> Result<(), ApiError> {
@@ -517,8 +524,9 @@ async fn create_flashcard(
     };
     let studio_id = auth.studio_id;
     let teacher_id = auth.teacher_id;
+    let actor_kind = auth.actor_kind;
     let created = run_repository(state.repository.clone(), move |repository| {
-        repository.create_flashcard_for_studio(&studio_id, &teacher_id, &card)
+        repository.create_flashcard_for_actor(&studio_id, &teacher_id, actor_kind, &card)
     })
     .await?;
     Ok((
@@ -545,8 +553,9 @@ async fn update_flashcard(
     };
     let studio_id = auth.studio_id;
     let teacher_id = auth.teacher_id;
+    let actor_kind = auth.actor_kind;
     let updated = run_repository(state.repository.clone(), move |repository| {
-        repository.update_flashcard_for_studio(&studio_id, &teacher_id, &id, patch)
+        repository.update_flashcard_for_actor(&studio_id, &teacher_id, actor_kind, &id, patch)
     })
     .await?;
     let exercise = state
@@ -593,9 +602,10 @@ async fn create_visual_brief(
     };
     let studio_id = auth.studio_id;
     let teacher_id = auth.teacher_id;
+    let actor_kind = auth.actor_kind;
     let saved_brief = brief.clone();
     run_repository(state.repository.clone(), move |repository| {
-        repository.save_visual_brief_for_studio(&studio_id, &teacher_id, &saved_brief)
+        repository.save_visual_brief_for_actor(&studio_id, &teacher_id, actor_kind, &saved_brief)
     })
     .await?;
     Ok((
@@ -646,9 +656,10 @@ async fn create_job(
     };
     let studio_id = auth.studio_id;
     let teacher_id = auth.teacher_id;
+    let actor_kind = auth.actor_kind;
     let saved_job = job.clone();
     run_repository(state.repository.clone(), move |repository| {
-        repository.create_job_for_studio(&studio_id, &teacher_id, &saved_job)
+        repository.create_job_for_actor(&studio_id, &teacher_id, actor_kind, &saved_job)
     })
     .await?;
     Ok((StatusCode::ACCEPTED, Json(job_response(job))))
@@ -713,11 +724,13 @@ async fn submit_review(
     auth.require(SUBMIT_REVIEW)?;
     let studio_id = auth.studio_id.clone();
     let teacher_id = auth.teacher_id.clone();
+    let actor_kind = auth.actor_kind.clone();
     let card_id = id.clone();
     run_repository(state.repository.clone(), move |repository| {
-        repository.transition_status_for_studio(
+        repository.transition_status_for_actor(
             &studio_id,
             &teacher_id,
+            actor_kind,
             &card_id,
             FlashcardStatus::NeedsReview,
         )

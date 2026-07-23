@@ -8,34 +8,34 @@ authority for review, approval, and publication.
 
 Production uses OAuth 2.1. ChatGPT is the OAuth client and receives an access
 token from the studio authorization server using authorization-code flow with
-PKCE. The MCP service is a resource server: it publishes protected-resource
-metadata at `/.well-known/oauth-protected-resource` and validates the bearer
+PKCE. ChatGPT owns the authorization redirect and code exchange. The MCP
+service is a resource server: it publishes protected-resource metadata at
+`/.well-known/oauth-protected-resource`, returns an HTTP 401 Bearer challenge
+with resource metadata for absent or invalid tokens, and validates the bearer
 token on every `/mcp` request through the configured authorization-server
-introspection endpoint. It forwards that bearer token only from server to the
-MPS HTTP API.
+introspection endpoint.
 
 Configure these deployment environment variables (see
 `services/mps-mcp/.env.example`):
 
 - `MPS_API_BASE_URL`: the MPS HTTP API origin.
 - `MPS_RESOURCE_URL`: public MCP URL ending in `/mcp`.
-- `MPS_OAUTH_ISSUER`, `MPS_OAUTH_INTROSPECTION_URL`, and `MPS_OAUTH_TOKEN_URL`:
+- `MPS_OAUTH_ISSUER` and `MPS_OAUTH_INTROSPECTION_URL`:
   the studio authorization server endpoints.
-- `MPS_OAUTH_CLIENT_ID`, `MPS_OAUTH_CLIENT_SECRET`, and
-  `MPS_TOKEN_ENCRYPTION_KEY`: deployment secrets only.
-- `MPS_OAUTH_REDIRECT_URI`: `https://<MCP-host>/oauth/callback`, registered with
-  the authorization server.
+- `MPS_OAUTH_CLIENT_ID` and `MPS_OAUTH_CLIENT_SECRET`: deployment secrets used
+  only for token introspection.
+- `MPS_API_SERVICE_TOKEN`: server-only credential for the MPS API.
 
-The callback accepts an authorization code plus its PKCE verifier and exchanges
-it at the authorization server. The adapter does not store access or refresh
-tokens. Local development has no OAuth fallback or embedded test identity:
+The adapter does not implement an OAuth callback, code exchange, or token
+storage. Local development has no OAuth fallback or embedded test identity:
 configure a real authorization server, or inject a verifier only in automated
 tests.
 
 In the ChatGPT app connection, use the public MCP endpoint
 `https://<MCP-host>/mcp`, grant only the requested scopes, and register the
-same redirect URI with the authorization server. The app should discover the
-resource metadata from the MCP host and initiate authorization with PKCE.
+the authorization server with the MCP resource URL as its audience/resource.
+The app should discover the resource metadata from the MCP host and initiate
+authorization with PKCE.
 
 ## Scope map
 
@@ -47,9 +47,8 @@ resource metadata from the MCP host and initiate authorization with PKCE.
 | `submit_review` | `review_flashcard_image`, `submit_for_review` |
 
 Token claims must contain active status, `studio_id`, `teacher_id`, and at least
-one supported scope. The adapter does not accept studio or teacher IDs from a
-tool call; the authenticated MPS API context supplies those values to its
-existing audited draft and review routes.
+one supported scope, exact issuer, matching resource audience, and an unexpired
+`exp`. The adapter does not accept studio or teacher IDs from a tool call.
 
 ## Safety contract
 
@@ -71,8 +70,10 @@ HTTP API before connecting it to ChatGPT. The API token validation policy must
 be configured to return the authenticated studio, teacher, and allowed scopes;
 the adapter does not manufacture or persist them.
 
-Task 6 currently records those authenticated draft/review mutations as a
-`teacher` actor in the Rust repository. Changing the persisted audit actor to
-`chatgpt` requires an MPS API/database change and is deliberately outside this
-adapter-only task; the adapter does not spoof that value in tool input or
-headers.
+The adapter never forwards the end-user OAuth bearer to MPS. Instead it calls
+MPS with `MPS_API_SERVICE_TOKEN` and verified studio/teacher identity headers.
+MPS accepts those headers only when its `MPS_MCP_SERVICE_TOKEN` matches that
+service token and requires actor kind `chatgpt`; human static bearer auth is
+unchanged. These adapter-originated mutations are audited as `chatgpt` with the
+verified teacher identity. Keep both service-token variables server-side and
+identical; never expose either to ChatGPT or a browser.
