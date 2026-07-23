@@ -54,6 +54,7 @@ async function execute(name, args, api) { switch (name) {
 
 function isNotification(request) { return !Object.prototype.hasOwnProperty.call(request, "id"); }
 function rpcResponse(request, response) { return { jsonrpc: "2.0", id: request.id ?? null, ...response }; }
+function validRequest(request) { return request && typeof request === "object" && !Array.isArray(request) && request.jsonrpc === "2.0" && typeof request.method === "string"; }
 function maxBodyBytes(env) { const value = Number(env.MPS_MCP_MAX_BODY_BYTES ?? 65_536); return Number.isSafeInteger(value) && value > 0 ? value : 65_536; }
 async function readBody(request, maxBytes) { if (Number(request.headers["content-length"] ?? 0) > maxBytes) return null; const chunks = []; let size = 0; for await (const chunk of request) { size += chunk.length; if (size > maxBytes) return null; chunks.push(chunk); } return Buffer.concat(chunks); }
 function challenge(env, error, requiredScope) { const parts = [`Bearer resource="${env.MPS_RESOURCE_URL}"`, `resource_metadata="${new URL("/.well-known/oauth-protected-resource", env.MPS_RESOURCE_URL).toString()}"`]; if (error) parts.push(`error="${error}"`); if (requiredScope) parts.push(`scope="${requiredScope}"`); return parts.join(", "); }
@@ -67,7 +68,10 @@ export function createHttpServer({ env = process.env, fetchImpl = fetch } = {}) 
     let rpc; try { rpc = JSON.parse(body.toString("utf8")); } catch { return respond(res, 400, { jsonrpc: "2.0", id: null, error: { code: JSON_RPC.INVALID_REQUEST, message: "invalid JSON" } }); }
     if (Array.isArray(rpc) && rpc.length === 0) return respond(res, 400, { jsonrpc: "2.0", id: null, error: { code: JSON_RPC.INVALID_REQUEST, message: "empty batch" } });
     const requests = Array.isArray(rpc) ? rpc : [rpc]; const responses = [];
-    for (const request of requests) { const response = await handler(request, req.headers); if (!isNotification(request)) responses.push(rpcResponse(request, response)); }
+    for (const request of requests) {
+      if (!validRequest(request)) { responses.push({ jsonrpc: "2.0", id: null, error: { code: JSON_RPC.INVALID_REQUEST, message: "invalid request" } }); continue; }
+      const response = await handler(request, req.headers); if (!isNotification(request)) responses.push(rpcResponse(request, response));
+    }
     if (responses.length === 0) return res.writeHead(202).end();
     const insufficient = responses.find((response) => response.error?.code === JSON_RPC.FORBIDDEN && response.error.data?.requiredScope); const unauthorized = responses.find((response) => response.error?.code === JSON_RPC.UNAUTHORIZED);
     const authError = insufficient ?? unauthorized; const requiredScope = insufficient?.error.data.requiredScope; const header = authError && challenge(env, insufficient ? "insufficient_scope" : "invalid_token", requiredScope);

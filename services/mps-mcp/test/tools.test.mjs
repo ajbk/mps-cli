@@ -136,6 +136,17 @@ test("notifications return 202 without a body and batches return only responses"
   });
 });
 
+test("malformed batch entries return invalid-request errors without dispatching", async () => {
+  const env = { MPS_API_BASE_URL: "https://api.test", MPS_API_SERVICE_TOKEN: "service-token", MPS_OAUTH_INTROSPECTION_URL: "https://issuer.test/introspect", MPS_OAUTH_CLIENT_ID: "id", MPS_OAUTH_CLIENT_SECRET: "secret", MPS_OAUTH_ISSUER: "https://issuer.test", MPS_RESOURCE_URL: "https://mcp.test/mcp" };
+  await withServer(env, async () => { throw new Error("malformed requests must not introspect"); }, async (port) => {
+    const response = await post(port, [null]);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body[0].error.code, -32600);
+    assert.equal(body[0].id, null);
+  });
+});
+
 test("MCP request bodies are bounded before authorization", async () => {
   const env = { MPS_API_BASE_URL: "https://api.test", MPS_API_SERVICE_TOKEN: "service-token", MPS_MCP_MAX_BODY_BYTES: "16", MPS_OAUTH_INTROSPECTION_URL: "https://issuer.test/introspect", MPS_OAUTH_CLIENT_ID: "id", MPS_OAUTH_CLIENT_SECRET: "secret", MPS_OAUTH_ISSUER: "https://issuer.test", MPS_RESOURCE_URL: "https://mcp.test/mcp" };
   let calls = 0;
