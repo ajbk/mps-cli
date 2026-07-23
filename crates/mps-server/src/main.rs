@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use mps_server::{
     app, AppState, AuthContext, ServerConfig, AUTOMATED_REVIEW, DEFAULT_CATALOG_EXPORT_PATH,
-    browser_csrf_is_valid, csrf_cookie, session_cookie, session_token_from_cookie, GENERATE_ASSET,
+    browser_csrf_is_valid, session_token_from_cookie, GENERATE_ASSET,
     READ_CATALOG, SUBMIT_REVIEW, VISUAL_WORKER, WRITE_DRAFT,
 };
 use mps_db::AuditActorKind;
@@ -24,7 +24,6 @@ struct StaticTokenAuth {
     visual_worker_bearer_token: String,
     visual_worker_context: AuthContext,
     browser_sessions: mps_server::BrowserSessionStore,
-    session_cookie_secure: bool,
 }
 
 #[tokio::main]
@@ -95,16 +94,13 @@ async fn main() -> Result<()> {
         )
         .with_actor_kind(AuditActorKind::System),
         browser_sessions: Default::default(),
-        session_cookie_secure: true,
     };
     let state = tokio::task::spawn_blocking(move || AppState::load(&config))
         .await
         .context("join MPS server initialization task")??;
     let browser_sessions = state.browser_session_store();
-    let session_cookie_secure = state.session_cookie_secure();
     let auth = StaticTokenAuth {
         browser_sessions,
-        session_cookie_secure,
         ..auth
     };
     let application = app(state).layer(middleware::from_fn_with_state(auth, authenticate));
@@ -134,24 +130,8 @@ async fn authenticate(
         if presented != Some(auth.teacher_bearer_token.as_str()) {
             return unauthorized();
         }
-        let credentials = match auth.browser_sessions.issue(auth.teacher_context.clone()) {
-            Ok(credentials) => credentials,
-            Err(_) => return internal_error(),
-        };
-        return (
-            StatusCode::NO_CONTENT,
-            [
-                (
-                    axum::http::header::SET_COOKIE,
-                    session_cookie(&credentials.session_token, auth.session_cookie_secure),
-                ),
-                (
-                    axum::http::header::SET_COOKIE,
-                    csrf_cookie(&credentials.csrf_token, auth.session_cookie_secure),
-                ),
-            ],
-        )
-            .into_response();
+        request.extensions_mut().insert(auth.teacher_context);
+        return next.run(request).await;
     }
 
     let session_token = session_token_from_cookie(request.headers());
@@ -227,14 +207,6 @@ fn csrf_forbidden() -> Response {
     (
         StatusCode::FORBIDDEN,
         Json(json!({"error": {"message": "missing or invalid MPS CSRF token"}})),
-    )
-        .into_response()
-}
-
-fn internal_error() -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({"error": {"status": 500, "message": "internal server error"}})),
     )
         .into_response()
 }

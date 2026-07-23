@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, Context};
 use axum::body::Body;
 use axum::extract::{FromRequestParts, Path, Query, State};
-use axum::http::{header, request::Parts, HeaderMap, StatusCode};
+use axum::http::{header, request::Parts, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{async_trait, Json, Router};
@@ -393,16 +393,7 @@ async fn create_browser_session(
         .map_err(|_| ApiError::internal())?;
     Ok((
         StatusCode::NO_CONTENT,
-        [
-            (
-                header::SET_COOKIE,
-                session_cookie(&credentials.session_token, state.session_cookie_secure),
-            ),
-            (
-                header::SET_COOKIE,
-                csrf_cookie(&credentials.csrf_token, state.session_cookie_secure),
-            ),
-        ],
+        browser_session_cookie_headers(&credentials, state.session_cookie_secure),
     )
         .into_response())
 }
@@ -437,10 +428,7 @@ async fn clear_browser_session(
     }
     Ok((
         StatusCode::NO_CONTENT,
-        [
-            (header::SET_COOKIE, clear_session_cookie(state.session_cookie_secure)),
-            (header::SET_COOKIE, clear_csrf_cookie(state.session_cookie_secure)),
-        ],
+        clear_browser_session_cookie_headers(state.session_cookie_secure),
     )
         .into_response())
 }
@@ -492,6 +480,24 @@ pub fn session_cookie(token: &str, secure: bool) -> String {
     )
 }
 
+pub fn browser_session_cookie_headers(
+    credentials: &BrowserSessionCredentials,
+    secure: bool,
+) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&session_cookie(&credentials.session_token, secure))
+            .expect("session cookie contains only valid header characters"),
+    );
+    headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&csrf_cookie(&credentials.csrf_token, secure))
+            .expect("CSRF cookie contains only valid header characters"),
+    );
+    headers
+}
+
 fn clear_session_cookie(secure: bool) -> String {
     format!(
         "{BROWSER_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
@@ -511,6 +517,21 @@ fn clear_csrf_cookie(secure: bool) -> String {
         "{BROWSER_CSRF_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0{}",
         if secure { "; Secure" } else { "" }
     )
+}
+
+pub fn clear_browser_session_cookie_headers(secure: bool) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&clear_session_cookie(secure))
+            .expect("session cookie contains only valid header characters"),
+    );
+    headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&clear_csrf_cookie(secure))
+            .expect("CSRF cookie contains only valid header characters"),
+    );
+    headers
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2268,6 +2289,51 @@ mod routes {
         ));
         store.revoke(&credentials.session_token);
         assert!(store.authenticate(&credentials.session_token).is_none());
+    }
+
+    #[test]
+    fn session_routes_preserve_both_set_cookie_headers() {
+        let fixture = test_app();
+        let runtime = tokio::runtime::Runtime::new().expect("create test runtime");
+        runtime.block_on(async {
+            let created = fixture
+                .app
+                .clone()
+                .oneshot(request(Method::POST, "/api/session", auth("studio-a"), None))
+                .await
+                .expect("create browser session response");
+            assert_eq!(created.status(), StatusCode::NO_CONTENT);
+            let created_cookies = created
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .map(|value| value.to_str().expect("valid cookie header").to_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(created_cookies.len(), 2);
+            assert!(created_cookies.iter().any(|cookie| cookie.starts_with("mps_session=")));
+            assert!(created_cookies.iter().any(|cookie| cookie.starts_with("mps_csrf=")));
+
+            let cleared = fixture
+                .app
+                .clone()
+                .oneshot(request(Method::DELETE, "/api/session", auth("studio-a"), None))
+                .await
+                .expect("clear browser session response");
+            assert_eq!(cleared.status(), StatusCode::NO_CONTENT);
+            let cleared_cookies = cleared
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .map(|value| value.to_str().expect("valid cookie header").to_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(cleared_cookies.len(), 2);
+            assert!(cleared_cookies
+                .iter()
+                .any(|cookie| cookie.starts_with("mps_session=") && cookie.contains("Max-Age=0")));
+            assert!(cleared_cookies
+                .iter()
+                .any(|cookie| cookie.starts_with("mps_csrf=") && cookie.contains("Max-Age=0")));
+        });
     }
 
     #[test]
