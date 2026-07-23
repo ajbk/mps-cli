@@ -1,0 +1,17 @@
+[package]
+name = "mps-server"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+mps-db = { path = "../mps-db" }
+mps-flashcards = { path = "../mps-flashcards" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tower.workspace = true
