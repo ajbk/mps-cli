@@ -920,6 +920,9 @@ async function renderFlashcards() {
 }
 
 function renderFlashcard(card) {
+    const apiMode = apiFlashcardMode();
+    const canonicalSourceId = card.source_exercise_id || card.api_source_exercise_id || null;
+    const canCreate = Boolean(card.status || !apiMode || canonicalSourceId);
     const slug = String(card.category || card.apparatus || 'flashcard').toLowerCase().replace(/[^a-z0-9-]+/g, '-');
     const catalogImage = card.catalog_image || (!card.status ? card.image : null);
     const artImage = card.image || catalogImage;
@@ -956,7 +959,7 @@ function renderFlashcard(card) {
             </section>
             <footer class="flashcard-library-footer">
                 <span class="flashcard-status">${escapeHtml(status)}</span>
-                <button class="secondary create-flashcard" type="button" data-create-flashcard="${escapeHtml(card.id)}">${card.status ? 'Open card' : 'Create card'}</button>
+                <button class="secondary create-flashcard" type="button" data-create-flashcard="${escapeHtml(card.id)}"${canCreate ? '' : ' disabled'}${canCreate ? '' : ' title="This exercise is not mapped to the canonical workbook and cannot be created in API mode"'}>${card.status ? 'Open card' : 'Create card'}</button>
             </footer>
         </article>
     `;
@@ -969,7 +972,11 @@ async function createFlashcardDraft(cardId) {
     if (!sourceCard) return;
 
     if (store.isApiMode) {
-        const sourceId = sourceCard.source_exercise_id || sourceCard.api_source_exercise_id || sourceCard.id;
+        const sourceId = sourceCard.source_exercise_id || sourceCard.api_source_exercise_id || null;
+        if (!sourceId) {
+            showToast('This exercise is not mapped to the canonical workbook and cannot be created in API mode');
+            return;
+        }
         const existing = listedCard?.status
             ? listedCard
             : (state.flashcardLibrary || []).find((card) => card.status && (
@@ -1033,7 +1040,7 @@ async function selectedFlashcardDraft() {
 function canonicalSourceFromCatalogCard(source) {
     if (!source) return null;
     return {
-        exercise_id: source.source_exercise_id || source.id,
+        exercise_id: source.source_exercise_id || source.api_source_exercise_id || (apiFlashcardMode() ? null : source.id),
         style_profile: window.MPS_FLASHCARD_REVIEW.visualContract.style_profile,
         name: source.name,
         category: source.category,

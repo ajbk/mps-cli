@@ -17,7 +17,7 @@ async function loadStaticCards() {
     return window.MPS_FLASHCARDS;
 }
 
-async function loadStore({ apiBase = '', responses = [], storage = new Map() } = {}) {
+async function loadStore({ apiBase = '', responses = [], storage = new Map(), csrfCookie = 'csrf-test' } = {}) {
     const model = await loadModel();
     const source = await readFile(new URL('./flashcard-store.js', import.meta.url), 'utf8');
     const calls = [];
@@ -31,6 +31,7 @@ async function loadStore({ apiBase = '', responses = [], storage = new Map() } =
         MPS_API_BASE: apiBase,
         MPS_FLASHCARD_MODEL: model,
         localStorage,
+        document: { cookie: csrfCookie ? `mps_csrf=${csrfCookie}` : '' },
         fetch: async (url, options) => {
             calls.push({ url, options });
             const next = responseQueue.shift();
@@ -43,7 +44,7 @@ async function loadStore({ apiBase = '', responses = [], storage = new Map() } =
         },
         setTimeout
     };
-    vm.runInNewContext(source, { window, setTimeout, URLSearchParams });
+    vm.runInNewContext(source, { window, document: window.document, setTimeout, URLSearchParams });
     return { store: window.MPS_FLASHCARD_STORE({ sleep: async () => {} }), calls, storage };
 }
 
@@ -140,6 +141,15 @@ test('library catalog image URLs are relative public paths', async () => {
     assert.ok(catalog.every((card) => !card.image || (!card.image.startsWith('/') && !card.image.includes('/Users/'))));
 });
 
+test('shipped API catalog only exposes canonical workbook IDs when mapped', async () => {
+    const catalog = await loadStaticCards();
+    const mapped = catalog.filter((card) => card.source_exercise_id);
+
+    assert.equal(mapped.length, 14);
+    assert.ok(mapped.every((card) => card.source_exercise_id.startsWith('source_')));
+    assert.equal(catalog.find((card) => card.id === 'M02').source_exercise_id, undefined);
+});
+
 test('API mode lists cards through GET /api/flashcards and normalizes teaching copy', async () => {
     const { store, calls } = await loadStore({
         apiBase: 'https://mps.test/',
@@ -193,6 +203,62 @@ test('missing API base keeps local demo drafts in browser storage', async () => 
     assert.equal(draft.id, 'draft:M02');
     assert.equal(reopened.name, 'Pelvic Clock');
     assert.equal(storage.has('mps.flashcard.draft:M02'), true);
+    assert.equal(store.isApiMode, false);
+});
+
+test('API draft creation refuses a display ID without a canonical mapping', async () => {
+    const { store, calls } = await loadStore({ apiBase: 'https://mps.test' });
+
+    await assert.rejects(
+        () => store.createDraft({ id: 'R01', category: 'Reformer', name: 'Display-only exercise' }),
+        /not mapped to the canonical workbook/i
+    );
+    assert.equal(calls.length, 0);
+});
+
+test('API draft creation posts only the canonical source exercise ID', async () => {
+    const { store, calls } = await loadStore({
+        apiBase: 'https://mps.test',
+        responses: [{ body: {
+            id: 'card-1',
+            source_exercise_id: 'source_mat_roll_up_row_141',
+            category: 'Mat',
+            name: 'Roll Up',
+            status: 'draft'
+        } }]
+    });
+
+    await store.createDraft({
+        id: 'M09',
+        source_exercise_id: 'source_mat_roll_up_row_141',
+        category: 'Mat',
+        name: 'Roll Up'
+    });
+
+    assert.equal(JSON.parse(calls[0].options.body).source_exercise_id, 'source_mat_roll_up_row_141');
+    assert.doesNotMatch(calls[0].options.body, /M09/);
+    assert.equal(calls[0].options.headers['X-MPS-CSRF'], 'csrf-test');
+});
+
+test('API unsafe requests obtain a CSRF token from the authenticated session endpoint', async () => {
+    const { store, calls } = await loadStore({
+        apiBase: 'https://mps.test',
+        csrfCookie: '',
+        responses: [
+            { body: { authenticated: true, csrf_token: 'csrf-from-session' } },
+            { body: { id: 'card-1', source_exercise_id: 'source_mat_roll_up_row_141', status: 'draft' } }
+        ]
+    });
+
+    await store.createDraft({
+        id: 'M09',
+        source_exercise_id: 'source_mat_roll_up_row_141',
+        category: 'Mat',
+        name: 'Roll Up'
+    });
+
+    assert.equal(calls[0].url, 'https://mps.test/api/session');
+    assert.equal(calls[1].options.headers['X-MPS-CSRF'], 'csrf-from-session');
 });
 
 test('API generation creates a job and polls it until terminal status', async () => {

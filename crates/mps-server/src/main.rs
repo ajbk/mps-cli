@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use mps_server::{
     app, AppState, AuthContext, ServerConfig, AUTOMATED_REVIEW, DEFAULT_CATALOG_EXPORT_PATH,
-    session_cookie, session_token_from_cookie, GENERATE_ASSET,
+    browser_csrf_is_valid, csrf_cookie, session_cookie, session_token_from_cookie, GENERATE_ASSET,
     READ_CATALOG, SUBMIT_REVIEW, VISUAL_WORKER, WRITE_DRAFT,
 };
 use mps_db::AuditActorKind;
@@ -134,46 +134,73 @@ async fn authenticate(
         if presented != Some(auth.teacher_bearer_token.as_str()) {
             return unauthorized();
         }
-        let token = match auth.browser_sessions.issue(auth.teacher_context.clone()) {
-            Ok(token) => token,
+        let credentials = match auth.browser_sessions.issue(auth.teacher_context.clone()) {
+            Ok(credentials) => credentials,
             Err(_) => return internal_error(),
         };
         return (
             StatusCode::NO_CONTENT,
-            [(
-                axum::http::header::SET_COOKIE,
-                session_cookie(&token, auth.session_cookie_secure),
-            )],
+            [
+                (
+                    axum::http::header::SET_COOKIE,
+                    session_cookie(&credentials.session_token, auth.session_cookie_secure),
+                ),
+                (
+                    axum::http::header::SET_COOKIE,
+                    csrf_cookie(&credentials.csrf_token, auth.session_cookie_secure),
+                ),
+            ],
         )
             .into_response();
     }
 
-    let context = match presented {
-        Some(token) if token == auth.teacher_bearer_token.as_str() => auth.teacher_context,
+    let session_token = session_token_from_cookie(request.headers());
+    let (context, browser_session) = match presented {
+        Some(token) if token == auth.teacher_bearer_token.as_str() => (auth.teacher_context, false),
         Some(token) if token == auth.automated_review_bearer_token.as_str() => {
-            auth.automated_review_context
+            (auth.automated_review_context, false)
         }
         Some(token) if token == auth.mcp_service_bearer_token.as_str() => {
             match mcp_identity(request.headers()) {
-                Some((studio_id, teacher_id)) => AuthContext::new(
-                    studio_id,
-                    teacher_id,
-                    [READ_CATALOG, WRITE_DRAFT, GENERATE_ASSET, SUBMIT_REVIEW],
-                )
-                .with_actor_kind(AuditActorKind::Chatgpt),
+                Some((studio_id, teacher_id)) => (
+                    AuthContext::new(
+                        studio_id,
+                        teacher_id,
+                        [READ_CATALOG, WRITE_DRAFT, GENERATE_ASSET, SUBMIT_REVIEW],
+                    )
+                    .with_actor_kind(AuditActorKind::Chatgpt),
+                    false,
+                ),
                 None => return unauthorized(),
             }
         }
         Some(token) if token == auth.visual_worker_bearer_token.as_str() => {
-            auth.visual_worker_context
+            (auth.visual_worker_context, false)
         }
-        _ => match session_token_from_cookie(request.headers())
-            .and_then(|token| auth.browser_sessions.authenticate(&token))
+        _ => match session_token
+            .as_deref()
+            .and_then(|token| auth.browser_sessions.authenticate(token))
         {
-            Some(context) => context,
+            Some(context) => (context, true),
             None => return unauthorized(),
         },
     };
+    if browser_session
+        && matches!(
+            request.method(),
+            &axum::http::Method::POST
+                | &axum::http::Method::PATCH
+                | &axum::http::Method::PUT
+                | &axum::http::Method::DELETE
+        )
+        && !browser_csrf_is_valid(
+            request.headers(),
+            session_token.as_deref().unwrap_or_default(),
+            &auth.browser_sessions,
+        )
+    {
+        return csrf_forbidden();
+    }
     request.extensions_mut().insert(context);
     next.run(request).await
 }
@@ -192,6 +219,14 @@ fn unauthorized() -> Response {
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({"error": {"status": 401, "message": "authenticated MPS session or server-side bearer handoff is required"}})),
+    )
+        .into_response()
+}
+
+fn csrf_forbidden() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({"error": {"message": "missing or invalid MPS CSRF token"}})),
     )
         .into_response()
 }

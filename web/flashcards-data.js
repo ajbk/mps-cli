@@ -113,6 +113,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "R09",
+    "source_exercise_id": "source_reformer_supine_arm_work_row_300",
     "category": "Reformer",
     "name": "Supine Arm Work",
     "front": "Supine Arm Work - what should not move?",
@@ -217,6 +218,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "R17",
+    "source_exercise_id": "source_reformer_elephant_row_210",
     "category": "Reformer",
     "name": "Elephant",
     "front": "Elephant - why is it a strong transfer exercise?",
@@ -399,6 +401,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "R31",
+    "source_exercise_id": "source_reformer_pulling_straps_row_259",
     "category": "Reformer",
     "name": "Pulling Straps",
     "front": "Pulling Straps - what should initiate extension?",
@@ -464,6 +467,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "R36",
+    "source_exercise_id": "source_reformer_chest_expansion_row_193",
     "category": "Reformer",
     "name": "Chest Expansion",
     "front": "Chest Expansion - what is the key quality?",
@@ -639,6 +643,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M09",
+    "source_exercise_id": "source_mat_roll_up_row_141",
     "category": "Mat",
     "name": "Roll Up",
     "front": "Roll Up - what is the key quality?",
@@ -678,6 +683,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M12",
+    "source_exercise_id": "source_mat_rolling_like_a_ball_row_143",
     "category": "Mat",
     "name": "Rolling Like a Ball",
     "front": "Rolling Like a Ball - what does it train?",
@@ -691,6 +697,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M13",
+    "source_exercise_id": "source_mat_single_leg_stretch_row_154",
     "category": "Mat",
     "name": "Single Leg Stretch",
     "front": "Single Leg Stretch - why choose it?",
@@ -704,6 +711,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M14",
+    "source_exercise_id": "source_mat_double_leg_stretch_row_101",
     "category": "Mat",
     "name": "Double Leg Stretch",
     "front": "Double Leg Stretch - what must stay connected?",
@@ -717,6 +725,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M15",
+    "source_exercise_id": "source_mat_single_straight_leg_stretch_row_155",
     "category": "Mat",
     "name": "Single Straight Leg Stretch",
     "front": "Single Straight Leg Stretch - what does it emphasize?",
@@ -743,6 +752,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M17",
+    "source_exercise_id": "source_mat_criss_cross_row_99",
     "category": "Mat",
     "name": "Criss Cross",
     "front": "Criss Cross - what should rotate?",
@@ -782,6 +792,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M20",
+    "source_exercise_id": "source_mat_saw_row_144",
     "category": "Mat",
     "name": "Saw",
     "front": "Saw - what does it integrate?",
@@ -808,6 +819,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M22",
+    "source_exercise_id": "source_mat_swan_row_161",
     "category": "Mat",
     "name": "Swan",
     "front": "Swan - what should not happen?",
@@ -860,6 +872,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M26",
+    "source_exercise_id": "source_mat_spine_twist_row_159",
     "category": "Mat",
     "name": "Spine Twist",
     "front": "Spine Twist - what should be stable?",
@@ -938,6 +951,7 @@ window.MPS_FLASHCARDS = [
   },
   {
     "id": "M32",
+    "source_exercise_id": "source_mat_teaser_row_164",
     "category": "Mat",
     "name": "Teaser",
     "front": "Teaser - what makes it advanced?",

@@ -1147,6 +1147,83 @@ impl FlashcardRepository {
         })
     }
 
+    pub fn visual_details_for_job_for_studio(
+        &self,
+        studio_id: &str,
+        card_id: &str,
+        asset_id: Option<&str>,
+        review_id: Option<&str>,
+    ) -> Result<FlashcardVisualDetails> {
+        require_identity("studio", studio_id)?;
+        let studio_id = studio_id.to_owned();
+        let card_id = card_id.to_owned();
+        let asset_id = asset_id.map(str::to_owned);
+        let review_id = review_id.map(str::to_owned);
+        self.runtime.block_on(async {
+            let review: Option<(String, String, String, i64, String, i64, Option<String>)> =
+                if let Some(review_id) = review_id {
+                    sqlx::query_as(
+                        "SELECT reviews.id, reviews.card_id, reviews.asset_id, reviews.passed,
+                                reviews.findings_json, assets.version, reviews.reviewer_id
+                         FROM flashcard_reviews AS reviews
+                         JOIN flashcard_assets AS assets ON assets.id = reviews.asset_id
+                         WHERE reviews.id = ?
+                           AND reviews.card_id = ?
+                           AND reviews.reviewer_kind = 'automated'
+                           AND (? IS NULL OR reviews.asset_id = ?)
+                           AND EXISTS (
+                               SELECT 1 FROM flashcard_audit_events AS owner
+                               WHERE owner.card_id = reviews.card_id
+                                 AND owner.action = 'flashcard.created'
+                                 AND json_extract(owner.payload_json, '$.studio_id') = ?
+                           )",
+                    )
+                    .bind(review_id)
+                    .bind(&card_id)
+                    .bind(&asset_id)
+                    .bind(&asset_id)
+                    .bind(&studio_id)
+                    .fetch_optional(&self.pool)
+                    .await?
+                } else {
+                    None
+                };
+            let selected_asset_id = asset_id.or_else(|| review.as_ref().map(|row| row.2.clone()));
+            let asset: Option<(String, String, String, String, Option<String>, i64, String)> =
+                if let Some(asset_id) = selected_asset_id {
+                    sqlx::query_as(
+                        "SELECT assets.id, assets.card_id, assets.brief_id, assets.repo_path,
+                                assets.provider_job_id, assets.version, assets.status
+                         FROM flashcard_assets AS assets
+                         WHERE assets.id = ?
+                           AND assets.card_id = ?
+                           AND EXISTS (
+                               SELECT 1 FROM flashcard_audit_events AS owner
+                               WHERE owner.card_id = assets.card_id
+                                 AND owner.action = 'flashcard.created'
+                                 AND json_extract(owner.payload_json, '$.studio_id') = ?
+                           )",
+                    )
+                    .bind(asset_id)
+                    .bind(&card_id)
+                    .bind(&studio_id)
+                    .fetch_optional(&self.pool)
+                    .await?
+                } else {
+                    None
+                };
+            let asset = asset.map(asset_from_tuple).transpose()?;
+            let automated_review = match (review, asset.as_ref()) {
+                (Some(row), Some(asset)) if row.2 == asset.id => Some(review_from_tuple(row)?),
+                _ => None,
+            };
+            Ok(FlashcardVisualDetails {
+                asset,
+                automated_review,
+            })
+        })
+    }
+
     pub fn asset_for_studio(
         &self,
         studio_id: &str,
@@ -1180,34 +1257,81 @@ impl FlashcardRepository {
         })
     }
 
-    pub fn has_active_generation_job_for_studio(
+    pub fn transition_generating_to_needs_review_if_idle_for_actor(
         &self,
         studio_id: &str,
+        teacher_id: &str,
+        actor_kind: AuditActorKind,
         card_id: &str,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         require_identity("studio", studio_id)?;
+        require_identity("teacher", teacher_id)?;
         let studio_id = studio_id.to_owned();
+        let teacher_id = teacher_id.to_owned();
         let card_id = card_id.to_owned();
         self.runtime.block_on(async {
-            let exists: i64 = sqlx::query_scalar(
-                "SELECT EXISTS (
-                     SELECT 1 FROM flashcard_jobs AS jobs
-                     WHERE jobs.card_id = ?
-                       AND jobs.kind IN ('generate', 'regenerate')
-                       AND jobs.status IN ('queued', 'running')
-                       AND EXISTS (
-                           SELECT 1 FROM flashcard_audit_events AS owner
-                           WHERE owner.card_id = jobs.card_id
-                             AND owner.action = 'flashcard.created'
-                             AND json_extract(owner.payload_json, '$.studio_id') = ?
-                       )
-                 )",
+            let mut transaction = self.pool.begin().await?;
+            assert_card_studio_in_transaction(&mut transaction, &studio_id, &card_id).await?;
+            let card = get_flashcard_in_transaction(&mut transaction, &card_id)
+                .await?
+                .ok_or_else(|| anyhow!("flashcard not found: {card_id}"))?;
+            if card.status != FlashcardStatus::Generating {
+                return Err(anyhow!("invalid flashcard status transition"));
+            }
+
+            let updated = sqlx::query(
+                "UPDATE flashcard_cards
+                 SET status = 'needs-review', updated_at = ?
+                 WHERE id = ?
+                   AND status = 'generating'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM flashcard_jobs AS jobs
+                       WHERE jobs.card_id = flashcard_cards.id
+                         AND jobs.kind IN ('generate', 'regenerate')
+                         AND jobs.status IN ('queued', 'running')
+                   )",
             )
-            .bind(card_id)
-            .bind(studio_id)
-            .fetch_one(&self.pool)
+            .bind(timestamp())
+            .bind(&card_id)
+            .execute(&mut *transaction)
             .await?;
-            Ok(exists == 1)
+            if updated.rows_affected() != 1 {
+                let active: i64 = sqlx::query_scalar(
+                    "SELECT EXISTS (
+                         SELECT 1 FROM flashcard_jobs AS jobs
+                         WHERE jobs.card_id = ?
+                           AND jobs.kind IN ('generate', 'regenerate')
+                           AND jobs.status IN ('queued', 'running')
+                     )",
+                )
+                .bind(&card_id)
+                .fetch_one(&mut *transaction)
+                .await?;
+                return if active == 1 {
+                    Err(anyhow!(
+                        "cannot submit review while a generation job is active; worker completion submits it"
+                    ))
+                } else {
+                    Err(anyhow!("invalid flashcard status transition"))
+                };
+            }
+
+            record_audit_in_transaction(
+                &mut transaction,
+                &card_id,
+                actor_kind,
+                Some(&teacher_id),
+                "flashcard.status_transitioned",
+                json!({
+                    "studio_id": studio_id,
+                    "from": status_to_db(card.status),
+                    "to": status_to_db(FlashcardStatus::NeedsReview),
+                    "card_version": card.version,
+                }),
+            )
+            .await?;
+            transaction.commit().await?;
+            Ok(())
         })
     }
 

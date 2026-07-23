@@ -15,6 +15,11 @@
         return String(window.MPS_API_BASE || '').trim().replace(/\/$/, '');
     }
 
+    function canonicalSourceId(source) {
+        const value = source?.source_exercise_id || source?.api_source_exercise_id;
+        return value && String(value).trim() ? String(value).trim() : null;
+    }
+
     function jsonObject(value) {
         return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     }
@@ -158,7 +163,7 @@
                 ...catalogCard,
                 ...persistedCard,
                 catalog_image: catalogCard.image || null,
-                source_exercise_id: persistedCard.source_exercise_id || catalogCard.source_exercise_id || catalogCard.id
+                source_exercise_id: canonicalSourceId(persistedCard) || canonicalSourceId(catalogCard)
             };
         });
         return merged.concat(apiCards.filter((_, index) => !matched.has(index)));
@@ -185,14 +190,44 @@
     } = {}) {
         const base = String(apiBase || '').trim().replace(/\/$/, '');
         const isApiMode = Boolean(base);
+        let csrfTokenCache = String(window.MPS_CSRF_TOKEN || '').trim();
+
+        function readableCsrfCookie() {
+            if (typeof document === 'undefined') return '';
+            return String(document.cookie || '').split(';').map((part) => part.trim())
+                .find((part) => part.startsWith('mps_csrf='))?.slice('mps_csrf='.length) || '';
+        }
+
+        async function csrfTokenForRequest() {
+            const cookieToken = readableCsrfCookie();
+            if (cookieToken) return cookieToken;
+            if (csrfTokenCache || !isApiMode) return csrfTokenCache;
+            try {
+                const response = await fetchImpl(`${base}/api/session`, {
+                    credentials: 'include',
+                    headers: { Accept: 'application/json' }
+                });
+                if (!response.ok) return '';
+                const body = await response.json();
+                csrfTokenCache = typeof body?.csrf_token === 'string' ? body.csrf_token : '';
+            } catch (error) {
+                csrfTokenCache = '';
+            }
+            return csrfTokenCache;
+        }
 
         const request = async (path, options = {}) => {
+            const method = String(options.method || 'GET').toUpperCase();
+            const unsafe = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+            const csrf = unsafe ? await csrfTokenForRequest() : '';
             const response = await fetchImpl(`${base}${path}`, {
                 credentials: 'include',
                 ...options,
                 headers: {
                     Accept: 'application/json',
                     ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+                    ...(unsafe && csrf
+                        ? { 'X-MPS-CSRF': csrf } : {}),
                     ...(options.headers || {})
                 }
             });
@@ -249,8 +284,6 @@
         }
 
         async function createDraft(source, fields = {}) {
-            const sourceId = source?.source_exercise_id || source?.api_source_exercise_id || source?.id;
-            if (!sourceId) throw new Error('A canonical source exercise is required');
             if (!isApiMode) {
                 const draft = {
                     ...window.MPS_FLASHCARD_MODEL.createLocalDraft(source),
@@ -258,6 +291,10 @@
                 };
                 storage.setItem(`mps.flashcard.${draft.id}`, JSON.stringify(draft));
                 return draft;
+            }
+            const sourceId = canonicalSourceId(source);
+            if (!sourceId) {
+                throw new Error('This exercise is not mapped to the canonical workbook and cannot be created in API mode');
             }
             return normalizeCard(await request('/api/flashcards', {
                 method: 'POST',
@@ -360,7 +397,8 @@
             renderFindings,
             canPublish,
             canSubmitReview,
-            mergeCatalogCards: (catalog, persisted) => mergeCatalogCards(catalog, persisted, base)
+            mergeCatalogCards: (catalog, persisted) => mergeCatalogCards(catalog, persisted, base),
+            canonicalSourceId
         };
     };
 }());

@@ -20,13 +20,16 @@ key. In API mode, the browser sends normal MPS API requests and treats the API
 response as authoritative. Without `MPS_API_BASE`, the PWA stays usable as a
 static demo with local drafts; that mode cannot publish a real card.
 
-Set `window.MPS_API_BASE` before the application scripts load (the default in
-`web/index.html` is an empty string). A same-origin deployment can leave it
-empty only when the API is mounted at the PWA origin; same-origin transport is
-not authentication. The browser must first receive the `mps_session` HttpOnly
-cookie from the server-side handoff described below. A separate API origin
-must be written as its HTTPS base URL and configured for browser credentials,
-cookie scope, SameSite policy, and the required CORS allowlist.
+Set a non-empty `window.MPS_API_BASE` before the application scripts load to
+select API mode. The empty default in `web/index.html` always selects static
+demo mode, even when the API is mounted at the PWA origin. For a same-origin
+deployment, set it explicitly to `window.location.origin` (or inject the
+deployed HTTPS origin). Same-origin transport is not authentication. The
+browser must first receive the `mps_session` HttpOnly cookie and readable
+`mps_csrf` cookie from the server-side handoff described below. A separate API
+origin must be written as its HTTPS base URL and configured for browser
+credentials, cookie scope, SameSite policy, CSRF header forwarding, and the
+required CORS allowlist.
 
 ### Browser session and BFF boundary
 
@@ -43,12 +46,18 @@ contract is:
 1. Authenticate the teacher with the organization's login/OAuth provider.
 2. From the BFF server, call `POST /api/session` with
    `Authorization: Bearer $MPS_AUTH_TOKEN`.
-3. Relay the API `Set-Cookie: mps_session=...` response to the teacher's
-   browser, then redirect to the PWA. Do not relay or expose the bearer.
+3. Relay both API `Set-Cookie` headers (`mps_session` is HttpOnly and
+   `mps_csrf` is readable by the PWA) to the teacher's browser, then redirect
+   to the PWA. Do not relay or expose the bearer.
 4. The PWA calls the API with `credentials: include`. If the cookie is absent
    or expired, the API returns 401 and the PWA shows the configured
    `window.MPS_SESSION_HANDOFF_URL` sign-in link instead of pretending the
    request is authenticated.
+
+For a separate API origin, the PWA cannot read an API-origin cookie directly;
+it first reads the session-bound `csrf_token` returned by authenticated `GET
+/api/session`, then sends it as `X-MPS-CSRF` on every POST/PATCH/PUT/DELETE.
+The token is not the session token and does not grant access by itself.
 
 The repository does not invent or host the organization's teacher login. Set
 `MPS_SESSION_COOKIE_SECURE=false` only for local HTTP development. Set
@@ -75,9 +84,11 @@ or publish cards.
    publishes protected-resource metadata and does not receive a browser-side
    client secret.
 4. Grant only the scopes needed for the current task. Drafting normally needs
-   `read_catalog` and `write_draft`; generation needs `generate_asset`; a
-   completed, non-active review transition may use `submit_review`. A queued
-   or running generation job must be completed by the visual worker first.
+   `read_catalog` and `write_draft`; generation needs `generate_asset`; the
+   `submit_review` transition is only valid when the card is generating and no
+   queued/running generation job remains. Normally the visual worker completes
+   that job and atomically moves the card to needs-review, so a queued or
+   running job must be completed by the worker first.
 
 For the current ChatGPT Apps SDK authentication model, see the official
 [Apps SDK authentication guide](https://developers.openai.com/apps-sdk/build/auth)

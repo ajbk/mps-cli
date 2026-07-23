@@ -56,6 +56,8 @@ const WORKER_QA_CHECKS: &[&str] = &[
 
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub const BROWSER_SESSION_COOKIE: &str = "mps_session";
+pub const BROWSER_CSRF_COOKIE: &str = "mps_csrf";
+pub const BROWSER_CSRF_HEADER: &str = "x-mps-csrf";
 pub const BROWSER_SESSION_TTL_SECONDS: u64 = 30 * 60;
 
 #[derive(Clone, Default)]
@@ -67,21 +69,47 @@ pub struct BrowserSessionStore {
 struct BrowserSession {
     context: AuthContext,
     expires_at: SystemTime,
+    csrf_token: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BrowserSessionCredentials {
+    pub session_token: String,
+    pub csrf_token: String,
 }
 
 impl BrowserSessionStore {
-    pub fn issue(&self, context: AuthContext) -> anyhow::Result<String> {
-        let mut bytes = [0_u8; 32];
-        getrandom::getrandom(&mut bytes).context("generate browser session token")?;
-        let token = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    pub fn issue(&self, context: AuthContext) -> anyhow::Result<BrowserSessionCredentials> {
+        let mut session_bytes = [0_u8; 32];
+        getrandom::getrandom(&mut session_bytes).context("generate browser session token")?;
+        let session_token = session_bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let mut csrf_bytes = [0_u8; 32];
+        getrandom::getrandom(&mut csrf_bytes).context("generate browser CSRF token")?;
+        let csrf_token = csrf_bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         let expires_at = SystemTime::now() + Duration::from_secs(BROWSER_SESSION_TTL_SECONDS);
         let mut sessions = self
             .sessions
             .lock()
             .map_err(|_| anyhow!("browser session store is unavailable"))?;
         sessions.retain(|_, session| session.expires_at > SystemTime::now());
-        sessions.insert(token.clone(), BrowserSession { context, expires_at });
-        Ok(token)
+        sessions.insert(
+            session_token.clone(),
+            BrowserSession {
+                context,
+                expires_at,
+                csrf_token: csrf_token.clone(),
+            },
+        );
+        Ok(BrowserSessionCredentials {
+            session_token,
+            csrf_token,
+        })
     }
 
     pub fn authenticate(&self, token: &str) -> Option<AuthContext> {
@@ -92,6 +120,21 @@ impl BrowserSessionStore {
             return None;
         }
         Some(session.context)
+    }
+
+    pub fn csrf_valid(&self, session_token: &str, csrf_token: &str) -> bool {
+        let mut sessions = match self.sessions.lock() {
+            Ok(sessions) => sessions,
+            Err(_) => return false,
+        };
+        let Some(session) = sessions.get(session_token) else {
+            return false;
+        };
+        if session.expires_at <= SystemTime::now() {
+            sessions.remove(session_token);
+            return false;
+        }
+        session.csrf_token == csrf_token
     }
 
     pub fn revoke(&self, token: &str) {
@@ -336,29 +379,52 @@ struct SessionResponse {
     studio_id: String,
     teacher_id: String,
     expires_in_seconds: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    csrf_token: Option<String>,
 }
 
 async fn create_browser_session(
     State(state): State<AppState>,
     auth: AuthContext,
 ) -> Result<Response, ApiError> {
-    let token = state
+    let credentials = state
         .browser_sessions
         .issue(auth)
         .map_err(|_| ApiError::internal())?;
     Ok((
         StatusCode::NO_CONTENT,
-        [(header::SET_COOKIE, session_cookie(&token, state.session_cookie_secure))],
+        [
+            (
+                header::SET_COOKIE,
+                session_cookie(&credentials.session_token, state.session_cookie_secure),
+            ),
+            (
+                header::SET_COOKIE,
+                csrf_cookie(&credentials.csrf_token, state.session_cookie_secure),
+            ),
+        ],
     )
         .into_response())
 }
 
-async fn session_status(auth: AuthContext) -> Result<Json<SessionResponse>, ApiError> {
+async fn session_status(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    headers: HeaderMap,
+) -> Result<Json<SessionResponse>, ApiError> {
+    let csrf_token = session_token_from_cookie(&headers).and_then(|session_token| {
+        csrf_token_from_cookie(&headers).filter(|csrf_token| {
+            state
+                .browser_sessions
+                .csrf_valid(&session_token, csrf_token)
+        })
+    });
     Ok(Json(SessionResponse {
         authenticated: true,
         studio_id: auth.studio_id,
         teacher_id: auth.teacher_id,
         expires_in_seconds: BROWSER_SESSION_TTL_SECONDS,
+        csrf_token,
     }))
 }
 
@@ -371,7 +437,10 @@ async fn clear_browser_session(
     }
     Ok((
         StatusCode::NO_CONTENT,
-        [(header::SET_COOKIE, clear_session_cookie(state.session_cookie_secure))],
+        [
+            (header::SET_COOKIE, clear_session_cookie(state.session_cookie_secure)),
+            (header::SET_COOKIE, clear_csrf_cookie(state.session_cookie_secure)),
+        ],
     )
         .into_response())
 }
@@ -388,6 +457,34 @@ pub fn session_token_from_cookie(headers: &HeaderMap) -> Option<String> {
         })
 }
 
+pub fn csrf_token_from_cookie(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value.split(';').find_map(|pair| {
+                let (name, token) = pair.trim().split_once('=')?;
+                (name == BROWSER_CSRF_COOKIE && !token.is_empty()).then(|| token.to_owned())
+            })
+        })
+}
+
+pub fn browser_csrf_is_valid(
+    headers: &HeaderMap,
+    session_token: &str,
+    sessions: &BrowserSessionStore,
+) -> bool {
+    let Some(header_token) = headers
+        .get(BROWSER_CSRF_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    csrf_token_from_cookie(headers).as_deref() == Some(header_token)
+        && sessions.csrf_valid(session_token, header_token)
+}
+
 pub fn session_cookie(token: &str, secure: bool) -> String {
     format!(
         "{BROWSER_SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={BROWSER_SESSION_TTL_SECONDS}{}",
@@ -398,6 +495,20 @@ pub fn session_cookie(token: &str, secure: bool) -> String {
 fn clear_session_cookie(secure: bool) -> String {
     format!(
         "{BROWSER_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+pub fn csrf_cookie(token: &str, secure: bool) -> String {
+    format!(
+        "{BROWSER_CSRF_COOKIE}={token}; Path=/; SameSite=Lax; Max-Age={BROWSER_SESSION_TTL_SECONDS}{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+fn clear_csrf_cookie(secure: bool) -> String {
+    format!(
+        "{BROWSER_CSRF_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0{}",
         if secure { "; Secure" } else { "" }
     )
 }
@@ -1209,27 +1320,15 @@ async fn submit_review(
 ) -> Result<Json<MutationResponse>, ApiError> {
     auth.require(SUBMIT_REVIEW)?;
     let studio_id = auth.studio_id.clone();
-    let active_card_id = id.clone();
-    let active = run_repository(state.repository.clone(), move |repository| {
-        repository.has_active_generation_job_for_studio(&studio_id, &active_card_id)
-    })
-    .await?;
-    if active {
-        return Err(ApiError::conflict(
-            "cannot submit review while a generation job is active; worker completion submits it",
-        ));
-    }
-    let studio_id = auth.studio_id.clone();
     let teacher_id = auth.teacher_id.clone();
     let actor_kind = auth.actor_kind.clone();
     let card_id = id.clone();
     run_repository(state.repository.clone(), move |repository| {
-        repository.transition_status_for_actor(
+        repository.transition_generating_to_needs_review_if_idle_for_actor(
             &studio_id,
             &teacher_id,
             actor_kind,
             &card_id,
-            FlashcardStatus::NeedsReview,
         )
     })
     .await?;
@@ -1552,6 +1651,21 @@ fn job_response(job: FlashcardJob) -> JobResponse {
     }
 }
 
+fn job_visual_ids(job: &FlashcardJob) -> (Option<String>, Option<String>) {
+    let output = job.output_json.as_ref();
+    let asset_id = output
+        .and_then(|value| value.get("asset_id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let review_id = output
+        .and_then(|value| value.get("review_id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    (asset_id, review_id)
+}
+
 async fn job_response_for_studio(
     state: &AppState,
     studio_id: &str,
@@ -1559,8 +1673,14 @@ async fn job_response_for_studio(
 ) -> Result<JobResponse, ApiError> {
     let card_id = job.card_id.clone();
     let studio_id = studio_id.to_owned();
+    let (asset_id, review_id) = job_visual_ids(&job);
     let details = run_repository(state.repository.clone(), move |repository| {
-        repository.visual_details_for_studio(&studio_id, &card_id)
+        repository.visual_details_for_job_for_studio(
+            &studio_id,
+            &card_id,
+            asset_id.as_deref(),
+            review_id.as_deref(),
+        )
     })
     .await?;
     let mut response = job_response(job);
@@ -1818,6 +1938,7 @@ fn repository_error(error: anyhow::Error) -> ApiError {
     if message.contains("not found") {
         ApiError::not_found("resource not found")
     } else if message.contains("invalid flashcard status transition")
+        || message.contains("generation job is active")
         || message.contains("cannot publish")
         || message.contains("cannot approve")
         || message.contains("cannot continue")
@@ -2096,15 +2217,57 @@ mod routes {
     fn browser_session_is_opaque_http_only_and_revocable() {
         let store = BrowserSessionStore::default();
         let context = auth("studio-a");
-        let token = store.issue(context.clone()).expect("issue session");
-        assert_eq!(token.len(), 64);
-        assert_eq!(store.authenticate(&token).unwrap().studio_id, "studio-a");
-        let cookie = session_cookie(&token, true);
+        let credentials = store.issue(context.clone()).expect("issue session");
+        assert_eq!(credentials.session_token.len(), 64);
+        assert_eq!(credentials.csrf_token.len(), 64);
+        assert_eq!(
+            store.authenticate(&credentials.session_token).unwrap().studio_id,
+            "studio-a"
+        );
+        let cookie = session_cookie(&credentials.session_token, true);
         assert!(cookie.contains("HttpOnly"));
         assert!(cookie.contains("Secure"));
         assert!(!cookie.contains("studio-a"));
-        store.revoke(&token);
-        assert!(store.authenticate(&token).is_none());
+        let csrf = csrf_cookie(&credentials.csrf_token, true);
+        assert!(!csrf.contains("HttpOnly"));
+        assert!(csrf.contains("Secure"));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!(
+                "{}={}; {}={}",
+                BROWSER_SESSION_COOKIE,
+                credentials.session_token,
+                BROWSER_CSRF_COOKIE,
+                credentials.csrf_token
+            )
+            .parse()
+            .unwrap(),
+        );
+        headers.insert(
+            BROWSER_CSRF_HEADER,
+            credentials.csrf_token.parse().unwrap(),
+        );
+        assert!(browser_csrf_is_valid(
+            &headers,
+            &credentials.session_token,
+            &store
+        ));
+        headers.remove(BROWSER_CSRF_HEADER);
+        assert!(!browser_csrf_is_valid(
+            &headers,
+            &credentials.session_token,
+            &store
+        ));
+        headers.insert(BROWSER_CSRF_HEADER, "wrong-token".parse().unwrap());
+        assert!(!browser_csrf_is_valid(
+            &headers,
+            &credentials.session_token,
+            &store
+        ));
+        store.revoke(&credentials.session_token);
+        assert!(store.authenticate(&credentials.session_token).is_none());
     }
 
     #[test]
@@ -2244,8 +2407,8 @@ mod routes {
             ),
         );
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(job["asset"]["id"], "asset-a");
-        assert_eq!(job["automated_review"]["findings"][0]["check"], "pose");
+        assert!(job["asset"].is_null());
+        assert!(job["automated_review"].is_null());
         assert!(serde_json::to_string(&job).unwrap().find("object://").is_none());
     }
 
@@ -2719,6 +2882,99 @@ mod routes {
                 .status,
             FlashcardStatus::NeedsReview
         );
+        assert_eq!(body["asset"]["id"], "asset-a");
+        assert_eq!(body["automated_review"]["id"], "review-a");
+
+        fixture
+            .repository
+            .transition_status_for_studio(
+                "studio-a",
+                "teacher-01",
+                "card-a",
+                FlashcardStatus::RevisionRequested,
+            )
+            .unwrap();
+        fixture
+            .repository
+            .save_visual_brief_for_studio(
+                "studio-a",
+                "teacher-01",
+                &VisualBrief {
+                    id: "brief-b".into(),
+                    card_id: "card-a".into(),
+                    exercise_id: "source_chair_achilles_stretch_row_4".into(),
+                    style_profile: LOCKED_STYLE_PROFILE.into(),
+                    character_id: LOCKED_CHARACTER_ID.into(),
+                    outfit: LOCKED_OUTFIT.into(),
+                    pose_json: json!({"position": "standing-v2"}),
+                    apparatus: "Chair".into(),
+                    palette_json: json!({"cheekAccent": DUSTY_ROSE_CHEEK_ACCENT}),
+                    must_show_json: json!([]),
+                    must_not_show_json: json!(["arrows"]),
+                    version: 2,
+                },
+            )
+            .unwrap();
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/flashcards/card-a/jobs",
+                auth("studio-a"),
+                Some(json!({"id": "job-b", "kind": "regenerate", "brief_id": "brief-b"})),
+            ),
+        );
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let (status, claim) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-b/claim",
+                visual_worker("studio-a"),
+                Some(json!({"claim_id": "claim-b"})),
+            ),
+        );
+        assert_eq!(status, StatusCode::OK);
+        let claim_b = claim["claim_id"].as_str().unwrap();
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-b/complete",
+                visual_worker("studio-a"),
+                Some(json!({
+                    "claim_id": claim_b,
+                    "status": "succeeded",
+                    "asset": {
+                        "id": "asset-b",
+                        "brief_id": "brief-b",
+                        "repo_path": "object://mps-flashcards/card-a-v2.png",
+                        "provider_job_id": "provider-b",
+                        "version": 2
+                    },
+                    "review": {
+                        "id": "review-b",
+                        "asset_id": "asset-b",
+                        "passed": true,
+                        "findings_json": [{"check": "pose", "message": "Updated pose"}]
+                    }
+                })),
+            ),
+        );
+        assert_eq!(status, StatusCode::OK);
+        let (status, old_job) = send(
+            &fixture.app,
+            request(
+                Method::GET,
+                "/api/flashcards/card-a/jobs/job-a",
+                auth("studio-a"),
+                None,
+            ),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(old_job["asset"]["id"], "asset-a");
+        assert_eq!(old_job["automated_review"]["id"], "review-a");
+        assert_eq!(old_job["automated_review"]["findings"], json!([]));
 
         let (status, body) = send(
             &fixture.app,
@@ -2762,6 +3018,64 @@ mod routes {
             ),
         );
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn concurrent_submit_review_requests_have_one_atomic_transition() {
+        let fixture = test_app();
+        fixture
+            .repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-a"))
+            .unwrap();
+        fixture
+            .repository
+            .transition_status_for_studio(
+                "studio-a",
+                "teacher-01",
+                "card-a",
+                FlashcardStatus::Generating,
+            )
+            .unwrap();
+        let baseline_audits = fixture.repository.audit_event_count("card-a").unwrap();
+
+        let runtime = tokio::runtime::Runtime::new().expect("create test runtime");
+        let (first, second) = runtime.block_on(async {
+            tokio::join!(
+                fixture.app.clone().oneshot(request(
+                    Method::POST,
+                    "/api/flashcards/card-a/submit-review",
+                    auth("studio-a"),
+                    None,
+                )),
+                fixture.app.clone().oneshot(request(
+                    Method::POST,
+                    "/api/flashcards/card-a/submit-review",
+                    auth("studio-a"),
+                    None,
+                )),
+            )
+        });
+        let first_status = first.expect("first submit response").status();
+        let second_status = second.expect("second submit response").status();
+
+        assert!(
+            (first_status == StatusCode::OK && second_status == StatusCode::CONFLICT)
+                || (first_status == StatusCode::CONFLICT && second_status == StatusCode::OK),
+            "concurrent submit requests must yield exactly one winner: {first_status} / {second_status}"
+        );
+        assert_eq!(
+            fixture
+                .repository
+                .get_flashcard_for_studio("studio-a", "card-a")
+                .unwrap()
+                .unwrap()
+                .status,
+            FlashcardStatus::NeedsReview
+        );
+        assert_eq!(
+            fixture.repository.audit_event_count("card-a").unwrap(),
+            baseline_audits + 1
+        );
     }
 
     #[test]
