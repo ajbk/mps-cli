@@ -384,6 +384,12 @@ struct WorkerClaimResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct WorkerClaimRequest {
+    claim_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CreateReviewRequest {
     id: Option<String>,
     asset_id: String,
@@ -871,14 +877,16 @@ async fn claim_visual_job(
     State(state): State<AppState>,
     auth: AuthContext,
     Path((card_id, job_id)): Path<(String, String)>,
+    Json(request): Json<WorkerClaimRequest>,
 ) -> Result<Json<WorkerClaimResponse>, ApiError> {
     auth.require(VISUAL_WORKER)?;
     if auth.actor_kind != AuditActorKind::System {
         return Err(ApiError::forbidden("visual worker service identity is required"));
     }
+    validate_worker_claim_id(&request.claim_id)?;
     let studio_id = auth.studio_id;
     let worker_id = auth.teacher_id;
-    let claim_id = next_id("visual-claim");
+    let claim_id = request.claim_id;
     let claimed = run_repository(state.repository.clone(), move |repository| {
         repository.claim_job_for_worker(
             &studio_id,
@@ -1394,6 +1402,20 @@ fn next_id(prefix: &str) -> String {
         .as_millis();
     let sequence = ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     format!("{prefix}-{millis}-{sequence}")
+}
+
+fn validate_worker_claim_id(value: &str) -> Result<(), ApiError> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+    {
+        return Err(ApiError::bad_request("worker claim ID is invalid"));
+    }
+    Ok(())
 }
 
 fn repository_error(error: anyhow::Error) -> ApiError {
@@ -1997,13 +2019,24 @@ mod routes {
         );
         assert_eq!(status, StatusCode::FORBIDDEN);
 
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/claim",
+                visual_worker("studio-a"),
+                Some(json!({"claim_id": "../unsafe"})),
+            ),
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
         let (status, body) = send(
             &fixture.app,
             request(
                 Method::POST,
                 "/api/internal/flashcards/card-a/jobs/job-a/claim",
                 visual_worker("studio-a"),
-                None,
+                Some(json!({"claim_id": "claim-1"})),
             ),
         );
         assert_eq!(status, StatusCode::OK);
@@ -2016,7 +2049,7 @@ mod routes {
                 Method::POST,
                 "/api/internal/flashcards/card-a/jobs/job-a/claim",
                 visual_worker("studio-a"),
-                None,
+                Some(json!({"claim_id": "claim-1"})),
             ),
         );
         assert_eq!(status, StatusCode::OK);
@@ -2029,7 +2062,18 @@ mod routes {
                 Method::POST,
                 "/api/internal/flashcards/card-a/jobs/job-a/claim",
                 visual_worker_as("studio-a", "other-worker"),
-                None,
+                Some(json!({"claim_id": "claim-other"})),
+            ),
+        );
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/claim",
+                visual_worker("studio-a"),
+                Some(json!({"claim_id": "claim-1-retry"})),
             ),
         );
         assert_eq!(status, StatusCode::CONFLICT);
@@ -2215,14 +2259,14 @@ mod routes {
                 fixture.app.clone().oneshot(request(
                     Method::POST,
                     "/api/internal/flashcards/card-a/jobs/job-a/claim",
-                    visual_worker_as("studio-a", "worker-a"),
-                    None,
+                    visual_worker("studio-a"),
+                    Some(json!({"claim_id": "attempt-a"})),
                 )),
                 fixture.app.clone().oneshot(request(
                     Method::POST,
                     "/api/internal/flashcards/card-a/jobs/job-a/claim",
-                    visual_worker_as("studio-a", "worker-b"),
-                    None,
+                    visual_worker("studio-a"),
+                    Some(json!({"claim_id": "attempt-b"})),
                 )),
             )
         });

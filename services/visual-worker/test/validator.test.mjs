@@ -108,7 +108,7 @@ function testPersistenceReporter(onRequest = () => {}) {
         status: 200,
         json: async () => ({
           status: String(url).endsWith('/claim') ? 'running' : payload.status,
-          claim_id: 'claim-1',
+          claim_id: payload.claim_id ?? 'claim-1',
         }),
       };
     },
@@ -321,8 +321,9 @@ test('worker emits status events and leaves a passing asset in needs-review', as
   assert.equal(result.asset.status, 'needs-review');
   assert.deepEqual(events.map((event) => event.status), ['running', 'succeeded']);
   assert.equal(persistenceRequests[0].url.endsWith('/claim'), true);
-  assert.deepEqual(persistenceRequests[0].body, {});
+  assert.match(persistenceRequests[0].body.claim_id, /^attempt-/);
   assert.deepEqual(persistenceRequests.slice(1).map((request) => request.body.status), ['succeeded']);
+  assert.equal(persistenceRequests[1].body.claim_id, persistenceRequests[0].body.claim_id);
 });
 
 test('worker rejects production execution without an atomic persistence reporter', async () => {
@@ -439,7 +440,7 @@ test('callback persistence failures propagate as retryable errors', async () => 
 test('success callback plus fallback failure propagates as retryable persistence', async () => {
   const reporter = async () => { throw new Error('private transport detail'); };
   Object.defineProperty(reporter, 'durable', { value: true });
-  Object.defineProperty(reporter, 'claim', { value: async () => ({ status: 'running', claim_id: 'claim-1' }) });
+  Object.defineProperty(reporter, 'claim', { value: async ({ claimId }) => ({ status: 'running', claim_id: claimId }) });
   await assert.rejects(
     () => processVisualJob({
       job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
@@ -473,7 +474,7 @@ test('lost success response retries the original terminal event instead of faili
   };
   Object.defineProperty(reporter, 'durable', { value: true });
   Object.defineProperty(reporter, 'claim', {
-    value: async () => ({ status: 'running', claim_id: 'claim-1' }),
+    value: async ({ claimId }) => ({ status: 'running', claim_id: claimId }),
   });
   const result = await processVisualJob({
     job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
@@ -498,7 +499,8 @@ test('lost success response retries the original terminal event instead of faili
 
   assert.equal(result.status, 'succeeded');
   assert.deepEqual(terminalEvents.map((event) => event.status), ['succeeded', 'succeeded']);
-  assert.deepEqual(terminalEvents.map((event) => event.claimId), ['claim-1', 'claim-1']);
+  assert.match(terminalEvents[0].claimId, /^attempt-/);
+  assert.deepEqual(terminalEvents.map((event) => event.claimId), [terminalEvents[0].claimId, terminalEvents[0].claimId]);
 });
 
 test('a full retry reconciles an already committed terminal claim before generation', async () => {
@@ -577,6 +579,22 @@ test('HTTP persistence reporter sends only the server callback contract', async 
   assert.equal(request.url, 'https://mps.internal/api/internal/flashcards/card-1/jobs/job-1/complete');
   assert.equal(request.options.headers.authorization, 'Bearer worker-secret');
   assert.deepEqual(JSON.parse(request.options.body), { status: 'failed', claim_id: 'claim-1' });
+});
+
+test('HTTP claim reporter sends the worker-created attempt ID', async () => {
+  let request;
+  const reporter = createWorkerPersistenceReporter({
+    baseUrl: 'https://mps.internal',
+    workerToken: 'worker-secret',
+    fetchImpl: async (url, options) => {
+      request = { url: String(url), options };
+      return { ok: true, status: 200, json: async () => ({ status: 'running', claim_id: 'attempt-1' }) };
+    },
+  });
+  await reporter.claim({ jobId: 'job-1', cardId: 'card-1', claimId: 'attempt-1' });
+
+  assert.equal(request.url, 'https://mps.internal/api/internal/flashcards/card-1/jobs/job-1/claim');
+  assert.deepEqual(JSON.parse(request.options.body), { claim_id: 'attempt-1' });
 });
 
 test('HTTP persistence reporter verifies the terminal response status', async () => {

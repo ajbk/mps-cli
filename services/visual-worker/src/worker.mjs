@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   assertSafeAssetPath,
   assertSafeIdentifier,
@@ -15,6 +17,10 @@ export class RetryablePersistenceError extends Error {
     this.code = 'visual_worker_persistence_retryable';
     this.retryable = true;
   }
+}
+
+function createAttemptClaimId() {
+  return assertSafeIdentifier(`attempt-${randomUUID()}`, 'claimId');
 }
 
 function publicError(error) {
@@ -171,15 +177,16 @@ export function createWorkerPersistenceReporter({ baseUrl, workerToken, fetchImp
   };
   Object.defineProperty(reporter, 'durable', { value: true });
   Object.defineProperty(reporter, 'claim', {
-    value: async ({ jobId, cardId }) => {
+    value: async ({ jobId, cardId, claimId }) => {
       const safeCardId = assertSafeIdentifier(cardId, 'cardId');
       const safeJobId = assertSafeIdentifier(jobId, 'jobId');
+      const safeClaimId = assertSafeIdentifier(claimId, 'claimId');
       const body = await postWorkerCallback({
         fetchImpl,
         root,
         workerToken,
         path: `/api/internal/flashcards/${encodeURIComponent(safeCardId)}/jobs/${encodeURIComponent(safeJobId)}/claim`,
-        payload: {},
+        payload: { claim_id: safeClaimId },
         expectedStatus: ['running', 'succeeded', 'failed'],
       });
       assertSafeIdentifier(body?.claim_id, 'claimId');
@@ -285,9 +292,13 @@ export async function processVisualJob({
       { code: 'ownership_mismatch', field: 'brief' },
     ]);
   }
-  const claim = await persistenceReporter.claim({ jobId, cardId });
+  const attemptClaimId = createAttemptClaimId();
+  const claim = await persistenceReporter.claim({ jobId, cardId, claimId: attemptClaimId });
   const claimStatus = claim?.status;
   const claimId = assertSafeIdentifier(claim?.claim_id ?? claim?.claimId, 'claimId');
+  if (claimStatus === 'running' && claimId !== attemptClaimId) {
+    throw new RetryablePersistenceError();
+  }
   if (claimStatus === 'succeeded' || claimStatus === 'failed') {
     return {
       jobId,

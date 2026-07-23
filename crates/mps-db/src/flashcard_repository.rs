@@ -190,7 +190,7 @@ mod tests {
                     "visual-worker",
                     "card-1",
                     "job-1",
-                    "claim-1-retry",
+                    "claim-1",
                 )
                 .unwrap()
                 .input_json
@@ -198,6 +198,17 @@ mod tests {
                 .and_then(Value::as_str),
             Some("claim-1")
         );
+        assert!(repository
+            .claim_job_for_worker(
+                "studio-a",
+                "visual-worker",
+                "card-1",
+                "job-1",
+                "claim-1-retry",
+            )
+            .expect_err("a same-worker retry with a different attempt must be rejected")
+            .to_string()
+            .contains("persisted running attempt"));
         assert!(repository
             .claim_job_for_worker(
                 "studio-a",
@@ -1465,15 +1476,23 @@ impl FlashcardRepository {
             if job.card_id != card_id {
                 return Err(anyhow!("flashcard job does not belong to the card"));
             }
-            if matches!(
-                job.status,
-                FlashcardJobStatus::Running
-                    | FlashcardJobStatus::Succeeded
-                    | FlashcardJobStatus::Failed
-            ) {
+            if matches!(job.status, FlashcardJobStatus::Succeeded | FlashcardJobStatus::Failed) {
                 let (claimed_by, _persisted_claim_id) = worker_claim_for_job(&job)?;
                 if claimed_by != worker_id {
                     return Err(anyhow!("worker claim is held by another worker"));
+                }
+                // A terminal claim is read-only reconciliation. Return its persisted token so a
+                // retry after a lost terminal response can confirm the committed outcome.
+                transaction.commit().await?;
+                return Ok(job);
+            }
+            if job.status == FlashcardJobStatus::Running {
+                let (claimed_by, persisted_claim_id) = worker_claim_for_job(&job)?;
+                if claimed_by != worker_id {
+                    return Err(anyhow!("worker claim is held by another worker"));
+                }
+                if persisted_claim_id != claim_id {
+                    return Err(anyhow!("worker claim token does not match the persisted running attempt"));
                 }
                 transaction.commit().await?;
                 return Ok(job);
