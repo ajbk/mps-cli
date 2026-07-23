@@ -7,13 +7,18 @@ use serde::{Deserialize, Serialize};
 pub const LOCKED_STYLE_PROFILE: &str = "mono-gesture-ink-pilates-v1";
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum FlashcardStatus {
+    #[serde(rename = "draft")]
     Draft,
+    #[serde(rename = "generating")]
     Generating,
+    #[serde(rename = "needs-review")]
     NeedsReview,
+    #[serde(rename = "revision-requested")]
     RevisionRequested,
+    #[serde(rename = "approved")]
     Approved,
+    #[serde(rename = "published")]
     Published,
 }
 
@@ -49,6 +54,7 @@ pub struct VisualBrief {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct AssetReview {
     pub asset_id: String,
+    pub asset_version: i64,
     pub passed: bool,
     pub findings_json: serde_json::Value,
     pub validator_version: String,
@@ -86,6 +92,16 @@ pub fn validate_new_draft(
             card.source_exercise_id.clone(),
         ));
     }
+    Ok(())
+}
+
+pub fn validate_visual_brief(brief: &VisualBrief) -> Result<(), FlashcardError> {
+    if brief.style_profile != LOCKED_STYLE_PROFILE {
+        return Err(FlashcardError::UnsupportedStyleProfile(
+            brief.style_profile.clone(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -151,12 +167,76 @@ mod tests {
     }
 
     #[test]
+    fn serializes_statuses_using_persistence_values() {
+        let statuses = [
+            (FlashcardStatus::Draft, "draft"),
+            (FlashcardStatus::Generating, "generating"),
+            (FlashcardStatus::NeedsReview, "needs-review"),
+            (FlashcardStatus::RevisionRequested, "revision-requested"),
+            (FlashcardStatus::Approved, "approved"),
+            (FlashcardStatus::Published, "published"),
+        ];
+
+        for (status, expected) in statuses {
+            assert_eq!(
+                serde_json::to_string(&status).unwrap(),
+                format!("\"{expected}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<FlashcardStatus>(&format!("\"{expected}\""))
+                    .unwrap(),
+                status
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_visual_briefs_with_an_unsupported_style_profile() {
+        let brief = visual_brief("unsupported-profile");
+
+        assert_eq!(
+            validate_visual_brief(&brief),
+            Err(FlashcardError::UnsupportedStyleProfile(
+                "unsupported-profile".into()
+            ))
+        );
+    }
+
+    #[test]
     fn round_trips_a_visual_brief_with_locked_style_and_cheek_accent() {
-        let brief = VisualBrief {
+        let brief = visual_brief(LOCKED_STYLE_PROFILE);
+
+        let encoded = serde_json::to_string(&brief).expect("brief should serialize");
+        let decoded: VisualBrief =
+            serde_json::from_str(&encoded).expect("brief should deserialize");
+
+        assert_eq!(decoded.style_profile, "mono-gesture-ink-pilates-v1");
+        assert_eq!(decoded.palette_json["cheekAccent"], "#D98F9A");
+        assert!(validate_visual_brief(&decoded).is_ok());
+    }
+
+    #[test]
+    fn serializes_the_reviewed_asset_version() {
+        let review = AssetReview {
+            asset_id: "asset-1".into(),
+            asset_version: 2,
+            passed: true,
+            findings_json: json!([]),
+            validator_version: "validator-1".into(),
+        };
+
+        let encoded = serde_json::to_value(&review).expect("review should serialize");
+
+        assert_eq!(encoded["asset_id"], "asset-1");
+        assert_eq!(encoded["asset_version"], 2);
+    }
+
+    fn visual_brief(style_profile: &str) -> VisualBrief {
+        VisualBrief {
             id: "brief-1".into(),
             card_id: "card-1".into(),
             exercise_id: "source_chair_achilles_stretch_row_4".into(),
-            style_profile: "mono-gesture-ink-pilates-v1".into(),
+            style_profile: style_profile.into(),
             character_id: "teacher-01".into(),
             outfit: "off-white crop top and charcoal biker shorts".into(),
             pose_json: json!({"position": "standing"}),
@@ -165,14 +245,7 @@ mod tests {
             must_show_json: json!(["neutral lumbar position"]),
             must_not_show_json: json!(["arrows", "text"]),
             version: 1,
-        };
-
-        let encoded = serde_json::to_string(&brief).expect("brief should serialize");
-        let decoded: VisualBrief =
-            serde_json::from_str(&encoded).expect("brief should deserialize");
-
-        assert_eq!(decoded.style_profile, "mono-gesture-ink-pilates-v1");
-        assert_eq!(decoded.palette_json["cheekAccent"], "#D98F9A");
+        }
     }
 
     #[test]
