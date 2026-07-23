@@ -228,3 +228,21 @@ test('a legacy draft hydrates only missing locked source fields from its canonic
     assert.equal(hydrated.teacher_review.reviewer, 'Teacher');
     assert.equal(review.hydrateLegacySource(card({ name: 'Mismatched name' }), canonicalSource), null);
 });
+
+test('a persisted selected draft hydrates only when its ID is trusted', async () => {
+    const review = await loadReview();
+    const legacy = card({
+        id: 'draft:M02',
+        apparatus: undefined,
+        source_snapshot: { exercise_id: 'M02', style_profile: 'mono-gesture-ink-pilates-v1' }
+    });
+
+    assert.equal(
+        review.hydrateTrustedDraft({ ...legacy, id: 'draft:M03' }, 'draft:M02', canonicalSource),
+        null
+    );
+    assert.equal(
+        review.hydrateTrustedDraft(legacy, 'draft:M02', canonicalSource).source_snapshot.level,
+        'Beginner'
+    );
+});

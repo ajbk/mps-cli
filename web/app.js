@@ -895,8 +895,9 @@ async function createFlashcardDraft(cardId) {
     const draftId = window.MPS_FLASHCARD_MODEL.draftKey(cardId);
     let existingDraft = await store.getCard(draftId);
     if (existingDraft) {
-        const hydrated = window.MPS_FLASHCARD_REVIEW.hydrateLegacySource(
+        const hydrated = window.MPS_FLASHCARD_REVIEW.hydrateTrustedDraft(
             existingDraft,
+            draftId,
             canonicalSourceFromCatalogCard(sourceCard)
         );
         if (hydrated) {
@@ -922,7 +923,14 @@ async function createFlashcardDraft(cardId) {
 
 async function selectedFlashcardDraft() {
     if (!state.selectedFlashcardId) return null;
-    return window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).getCard(state.selectedFlashcardId);
+    const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
+    const card = await store.getCard(state.selectedFlashcardId);
+    const hydrated = window.MPS_FLASHCARD_REVIEW.hydrateTrustedDraft(
+        card,
+        state.selectedFlashcardId,
+        canonicalSourceForCard(card)
+    );
+    return hydrated ? store.saveDraft(hydrated) : card;
 }
 
 function canonicalSourceFromCatalogCard(source) {

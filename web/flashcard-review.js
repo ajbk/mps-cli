@@ -53,6 +53,11 @@
         };
     }
 
+    function hydrateTrustedDraft(card, trustedDraftId, canonicalSource) {
+        if (!matchesTrustedDraft(card, trustedDraftId)) return null;
+        return hydrateLegacySource(card, canonicalSource);
+    }
+
     function invalidateTeacherEdits(card) {
         const version = (Number(card?.version) || 0) + 1;
         return {
@@ -146,6 +151,7 @@
         sourceIsUnchanged,
         matchesTrustedDraft,
         hydrateLegacySource,
+        hydrateTrustedDraft,
         invalidateTeacherEdits,
         visualContractMatches,
         canPublish,
