@@ -55,7 +55,11 @@ test('createLocalDraft preserves source exercise fields and creates a draft', as
         front: 'What does it assess?',
         level: 'Beginner',
         objective: 'Pelvic awareness',
-        image: 'assets/flashcard-images/mat/m02.png'
+        image: 'assets/flashcard-images/mat/m02.png',
+        style_profile: 'unapproved-style',
+        character_id: 'unapproved-character',
+        outfit: 'unapproved-outfit',
+        cheek_accent: '#000000'
     };
 
     const draft = model.createLocalDraft(sourceCard);
@@ -68,5 +72,7 @@ test('createLocalDraft preserves source exercise fields and creates a draft', as
     assert.equal(draft.status, 'draft');
     assert.equal(draft.style_profile, 'mono-gesture-ink-pilates-v1');
     assert.equal(draft.character_id, 'teacher-01');
+    assert.equal(draft.outfit, 'off-white thin-strap cropped Pilates camisole and dark charcoal high-waisted mid-thigh biker shorts');
+    assert.equal(draft.cheek_accent, '#D98F9A');
     assert.equal(draft.version, 1);
 });

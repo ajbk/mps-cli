@@ -50,8 +50,10 @@
             ...card,
             id: draftKey(card.id),
             source_exercise_id: card.source_exercise_id || card.id,
-            style_profile: card.style_profile || 'mono-gesture-ink-pilates-v1',
-            character_id: card.character_id || 'teacher-01',
+            style_profile: 'mono-gesture-ink-pilates-v1',
+            character_id: 'teacher-01',
+            outfit: 'off-white thin-strap cropped Pilates camisole and dark charcoal high-waisted mid-thigh biker shorts',
+            cheek_accent: '#D98F9A',
             current_asset_id: card.current_asset_id || null,
             version: card.version || 1,
             status: 'draft'
