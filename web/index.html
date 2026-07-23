@@ -383,12 +383,10 @@
             <section id="flashcards" class="view hidden">
                 <div class="topbar">
                     <div>
-                        <h2>Flashcards</h2>
-                        <p>Exercise teaching cards grouped by Reformer, Mat, Stand, and Chair.</p>
+                        <h2>Flashcard Library</h2>
+                        <p>Browse the teaching catalog, then create a local draft when a card is ready for production.</p>
                     </div>
                     <div class="actions">
-                        <input id="flashcard-search" type="search" placeholder="Search card, cue, objective">
-                        <select id="flashcard-level"></select>
                         <button class="ghost" id="print-flashcards" type="button">
                             <i data-lucide="printer" aria-hidden="true"></i>
                             <span>Print</span>
@@ -396,16 +394,36 @@
                     </div>
                 </div>
 
-                <div class="summary-grid" id="flashcard-metrics"></div>
-
-                <nav class="view-tabs flashcard-tabs" aria-label="Flashcard categories">
-                    <button class="tab-button active" type="button" data-flashcard-category="Reformer">Reformer</button>
-                    <button class="tab-button" type="button" data-flashcard-category="Mat">Mat</button>
-                    <button class="tab-button" type="button" data-flashcard-category="Stand">Stand</button>
-                    <button class="tab-button" type="button" data-flashcard-category="Chair">Chair</button>
-                </nav>
-
-                <div id="flashcard-deck" class="flashcard-deck"></div>
+                <div class="flashcard-library">
+                    <aside class="flashcard-library-sidebar" aria-label="Flashcard filters">
+                        <label class="field flashcard-search-field">
+                            <span>Search library</span>
+                            <input id="flashcard-search" type="search" placeholder="Search card, cue, objective">
+                        </label>
+                        <div class="flashcard-filter-group">
+                            <span class="flashcard-filter-label">Category</span>
+                            <nav class="flashcard-tabs" aria-label="Flashcard categories">
+                                <button class="tab-button active" type="button" data-flashcard-category="">All cards</button>
+                                <button class="tab-button" type="button" data-flashcard-category="Reformer">Reformer</button>
+                                <button class="tab-button" type="button" data-flashcard-category="Mat">Mat</button>
+                                <button class="tab-button" type="button" data-flashcard-category="Stand">Stand</button>
+                                <button class="tab-button" type="button" data-flashcard-category="Chair">Chair</button>
+                            </nav>
+                        </div>
+                        <label class="field">
+                            <span>Level</span>
+                            <select id="flashcard-level"></select>
+                        </label>
+                        <div class="flashcard-category-counts" id="flashcard-metrics" aria-label="Card counts by category"></div>
+                    </aside>
+                    <div class="flashcard-library-results">
+                        <div class="flashcard-results-head">
+                            <p id="flashcard-result-count" role="status"></p>
+                            <span>Local drafts retain the locked teacher and visual style.</span>
+                        </div>
+                        <div id="flashcard-deck" class="flashcard-deck"></div>
+                    </div>
+                </div>
             </section>
         </main>
     </div>

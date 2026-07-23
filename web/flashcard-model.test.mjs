@@ -10,6 +10,13 @@ async function loadModel() {
     return window.MPS_FLASHCARD_MODEL;
 }
 
+async function loadStaticCards() {
+    const source = await readFile(new URL('./flashcards-data.js', import.meta.url), 'utf8');
+    const window = {};
+    vm.runInNewContext(source, { window });
+    return window.MPS_FLASHCARDS;
+}
+
 const cards = [
     { id: 'R02', category: 'Reformer', level: 'Intermediate', name: 'Long Stretch', search: 'long stretch shoulder stability' },
     { id: 'M01', category: 'Mat', level: 'Beginner', name: 'Pelvic Clock', search: 'pelvic clock mobility' },
@@ -75,4 +82,30 @@ test('createLocalDraft preserves source exercise fields and creates a draft', as
     assert.equal(draft.outfit, 'off-white thin-strap cropped Pilates camisole and dark charcoal high-waisted mid-thigh biker shorts');
     assert.equal(draft.cheek_accent, '#D98F9A');
     assert.equal(draft.version, 1);
+});
+
+test('library demo catalog contains the complete static card set', async () => {
+    const catalog = await loadStaticCards();
+
+    assert.equal(catalog.length, 160);
+});
+
+test('library catalog filters to Mat cards', async () => {
+    const model = await loadModel();
+    const catalog = await loadStaticCards();
+
+    assert.ok(model.filterCards(catalog, { category: 'Mat' }).every((card) => card.category === 'Mat'));
+});
+
+test('library catalog finds M02 for pelvic clock search', async () => {
+    const model = await loadModel();
+    const catalog = await loadStaticCards();
+
+    assert.ok(model.filterCards(catalog, { query: 'pelvic clock' }).some((card) => card.id === 'M02'));
+});
+
+test('library catalog image URLs are relative public paths', async () => {
+    const catalog = await loadStaticCards();
+
+    assert.ok(catalog.every((card) => !card.image || (!card.image.startsWith('/') && !card.image.includes('/Users/'))));
 });

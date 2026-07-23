@@ -109,7 +109,7 @@ const state = {
     activeView: 'dashboard',
     selectedStudentId: null,
     planView: 'plan',
-    flashcardCategory: 'Reformer',
+    flashcardCategory: '',
     flashcardQuery: '',
     flashcardLevel: 'all',
     plan: null,
@@ -809,9 +809,9 @@ async function renderFlashcards() {
     $('#flashcard-metrics').innerHTML = flashcardCategories.map((category) => {
         const count = cards.filter((card) => card.category === category).length;
         return `
-            <button class="metric-card flashcard-metric ${category === state.flashcardCategory ? 'active' : ''}" type="button" data-flashcard-category="${escapeHtml(category)}">
-                <strong class="metric">${count}</strong>
+            <button class="flashcard-metric ${category === state.flashcardCategory ? 'active' : ''}" type="button" data-flashcard-category="${escapeHtml(category)}">
                 <span>${escapeHtml(category)}</span>
+                <strong>${count}</strong>
             </button>
         `;
     }).join('');
@@ -821,6 +821,7 @@ async function renderFlashcards() {
     });
 
     const filtered = await filteredFlashcards();
+    $('#flashcard-result-count').textContent = `${filtered.length} of ${cards.length} cards`;
     $('#flashcard-deck').innerHTML = filtered.length
         ? filtered.map(renderFlashcard).join('')
         : '<p class="muted">No flashcards match the current filters.</p>';
@@ -830,38 +831,35 @@ function renderFlashcard(card) {
     const slug = card.category.toLowerCase();
     const artClass = card.image ? 'flashcard-art has-image' : 'flashcard-art';
     const artStyle = card.image ? ` style="background-image: url('${safeAssetUrl(card.image)}')"` : '';
-    const rows = [
-        ['Level', card.level],
-        ['Objective', card.objective],
-        ['Principle', card.principle],
-        ['Cue', card.cue],
-        ['Regress', card.regress],
-        ['Progress', card.progress]
-    ];
+    const status = window.MPS_FLASHCARD_MODEL.statusLabel(card.status || 'published');
 
     return `
-        <article class="studio-flashcard flashcard-${slug}">
+        <article class="studio-flashcard flashcard-library-card flashcard-${slug}">
             <header class="flashcard-head">
                 <div class="${artClass}"${artStyle} aria-hidden="true"></div>
-                <div>
+                <div class="flashcard-card-title">
                     <strong>${escapeHtml(card.name)}</strong>
-                    <span>${escapeHtml(card.category)} / ${escapeHtml(card.id)}</span>
+                    <span>${escapeHtml(card.category)} · ${escapeHtml(card.id)}</span>
                 </div>
+                <span class="flashcard-level">${escapeHtml(card.level)}</span>
             </header>
-            <section class="flashcard-front">
-                <span class="muted">Front</span>
-                <p>${escapeHtml(card.front)}</p>
-            </section>
-            <section class="flashcard-back">
-                ${rows.map(([label, value]) => `
-                    <div>
-                        <b>${escapeHtml(label)}</b>
-                        <span>${escapeHtml(value || '-')}</span>
-                    </div>
-                `).join('')}
-            </section>
+            <p class="flashcard-library-objective">${escapeHtml(card.objective || card.front)}</p>
+            <footer class="flashcard-library-footer">
+                <span class="flashcard-status">${escapeHtml(status)}</span>
+                <button class="secondary create-flashcard" type="button" data-create-flashcard="${escapeHtml(card.id)}">Create card</button>
+            </footer>
         </article>
     `;
+}
+
+async function createFlashcardDraft(cardId) {
+    const sourceCard = flashcards().find((card) => card.id === cardId);
+    if (!sourceCard) return;
+
+    const draft = window.MPS_FLASHCARD_MODEL.createLocalDraft(sourceCard);
+    const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
+    await store.saveDraft(draft);
+    showToast(`${sourceCard.name} saved as a local draft`);
 }
 
 function exportData() {
@@ -1079,6 +1077,11 @@ function attachEvents() {
     });
 
     document.body.addEventListener('click', (event) => {
+        const createTarget = event.target.closest('[data-create-flashcard]');
+        if (createTarget) {
+            createFlashcardDraft(createTarget.dataset.createFlashcard).catch(() => showToast('Unable to create local draft'));
+            return;
+        }
         const categoryTarget = event.target.closest('[data-flashcard-category]');
         if (!categoryTarget) return;
         state.flashcardCategory = categoryTarget.dataset.flashcardCategory;
