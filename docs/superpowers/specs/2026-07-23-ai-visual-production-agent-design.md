@@ -1,7 +1,7 @@
 # MPS AI Visual Production Agent Design
 
-**Status:** Proposed  
-**Date:** 2026-07-23  
+**Status:** Proposed
+**Date:** 2026-07-23
 **Scope:** iOS-first PWA plus a Custom ChatGPT App/MCP integration for teacher-facing flashcard production.
 
 ## Objective
@@ -189,4 +189,3 @@ Every write records teacher identity, source card version, brief version, asset 
 4. Add structured brief generation and image-generation jobs.
 5. Add visual QA and revision loop.
 6. Enable teacher approval and publish.
-
