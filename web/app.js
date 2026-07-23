@@ -796,15 +796,15 @@ function flashcards() {
 }
 
 function filteredFlashcards() {
-    const query = state.flashcardQuery.trim().toLowerCase();
-    return flashcards()
-        .filter((card) => card.category === state.flashcardCategory)
-        .filter((card) => state.flashcardLevel === 'all' || card.level === state.flashcardLevel)
-        .filter((card) => !query || card.search.includes(query))
-        .sort((a, b) => a.id.localeCompare(b.id));
+    const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
+    return store.listCards({
+        category: state.flashcardCategory,
+        level: state.flashcardLevel,
+        query: state.flashcardQuery
+    });
 }
 
-function renderFlashcards() {
+async function renderFlashcards() {
     const cards = flashcards();
     $('#flashcard-metrics').innerHTML = flashcardCategories.map((category) => {
         const count = cards.filter((card) => card.category === category).length;
@@ -820,7 +820,7 @@ function renderFlashcards() {
         button.classList.toggle('active', button.dataset.flashcardCategory === state.flashcardCategory);
     });
 
-    const filtered = filteredFlashcards();
+    const filtered = await filteredFlashcards();
     $('#flashcard-deck').innerHTML = filtered.length
         ? filtered.map(renderFlashcard).join('')
         : '<p class="muted">No flashcards match the current filters.</p>';
