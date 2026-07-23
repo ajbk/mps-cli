@@ -184,31 +184,31 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/api/flashcards", get(list_flashcards).post(create_flashcard))
         .route(
-            "/api/catalog/exercises/{exercise_id}/context",
+            "/api/catalog/exercises/:exercise_id/context",
             get(get_exercise_context),
         )
         .route("/api/visual-contract", get(get_visual_contract))
         .route("/api/character-reference", get(get_character_reference))
         .route(
-            "/api/flashcards/{id}",
+            "/api/flashcards/:id",
             get(get_flashcard).patch(update_flashcard),
         )
         .route(
-            "/api/flashcards/{id}/visual-briefs",
+            "/api/flashcards/:id/visual-briefs",
             post(create_visual_brief),
         )
-        .route("/api/flashcards/{id}/jobs", post(create_job))
+        .route("/api/flashcards/:id/jobs", post(create_job))
         .route(
-            "/api/flashcards/{id}/jobs/{job_id}",
+            "/api/flashcards/:id/jobs/:job_id",
             get(get_flashcard_job),
         )
-        .route("/api/flashcards/{id}/reviews", post(create_review))
+        .route("/api/flashcards/:id/reviews", post(create_review))
         .route(
-            "/api/flashcards/{id}/submit-review",
+            "/api/flashcards/:id/submit-review",
             post(submit_review),
         )
-        .route("/api/flashcards/{id}/approve", post(approve_flashcard))
-        .route("/api/flashcards/{id}/publish", post(publish_flashcard))
+        .route("/api/flashcards/:id/approve", post(approve_flashcard))
+        .route("/api/flashcards/:id/publish", post(publish_flashcard))
         .with_state(state)
 }
 
