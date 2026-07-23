@@ -25,6 +25,7 @@ Configure these deployment environment variables (see
 - `MPS_OAUTH_CLIENT_ID` and `MPS_OAUTH_CLIENT_SECRET`: deployment secrets used
   only for token introspection.
 - `MPS_API_SERVICE_TOKEN`: server-only credential for the MPS API.
+- `MPS_MCP_MAX_BODY_BYTES`: maximum MCP POST body size (defaults to 65,536).
 
 The adapter does not implement an OAuth callback, code exchange, or token
 storage. Local development has no OAuth fallback or embedded test identity:
@@ -33,7 +34,7 @@ tests.
 
 In the ChatGPT app connection, use the public MCP endpoint
 `https://<MCP-host>/mcp`, grant only the requested scopes, and register the
-the authorization server with the MCP resource URL as its audience/resource.
+authorization server with the MCP resource URL as its audience/resource.
 The app should discover the resource metadata from the MCP host and initiate
 authorization with PKCE.
 
@@ -49,6 +50,13 @@ authorization with PKCE.
 Token claims must contain active status, `studio_id`, `teacher_id`, and at least
 one supported scope, exact issuer, matching resource audience, and an unexpired
 `exp`. The adapter does not accept studio or teacher IDs from a tool call.
+An insufficient scope receives HTTP 401 with `error="insufficient_scope"`, the
+required `scope`, and an MCP reauthorization challenge in response metadata so
+ChatGPT can request the added scope.
+
+MCP notifications, including `notifications/initialized`, return HTTP 202 with
+no body. JSON-RPC batches are supported and return only responses for entries
+that include an ID; an empty batch is invalid.
 
 ## Safety contract
 
@@ -57,6 +65,9 @@ and any style profile other than `mono-gesture-ink-pilates-v1`. Visual briefs
 are locked to `teacher-01`, the locked outfit, and subtle dusty-rose cheek
 accent `#D98F9A`. API results are recursively stripped of source-photo,
 database-path, and private-reference fields before being returned to ChatGPT.
+Runtime validation matches each published tool schema and rejects unknown,
+identity, publication-status, and unlocked-outfit fields instead of dropping
+them silently.
 
 There is intentionally no publish or approval tool. ChatGPT cannot approve or
 publish a flashcard. Teacher review and the server/PWA publication workflow are

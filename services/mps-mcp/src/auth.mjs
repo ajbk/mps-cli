@@ -4,7 +4,13 @@ export const SCOPES = new Set(["read_catalog", "write_draft", "generate_asset", 
 export const JSON_RPC = { INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601, INVALID_PARAMS: -32602, INTERNAL_ERROR: -32603, UNAUTHORIZED: -32001, FORBIDDEN: -32003 };
 
 export function rpcError(code, message) { return Object.assign(new Error(message), { code }); }
-export function requiredScope(context, scope) { if (!context?.scopes?.includes(scope)) throw rpcError(JSON_RPC.FORBIDDEN, `missing required scope: ${scope}`); }
+export function requiredScope(context, scope) {
+  if (!context?.scopes?.includes(scope)) {
+    const error = rpcError(JSON_RPC.FORBIDDEN, `missing required scope: ${scope}`);
+    error.requiredScope = scope;
+    throw error;
+  }
+}
 export function bearerFromHeaders(headers = {}) { const value = headers.authorization ?? headers.Authorization; if (!value?.startsWith("Bearer ")) throw rpcError(JSON_RPC.UNAUTHORIZED, "bearer token is required"); return value.slice(7); }
 
 function audienceContains(audience, resource) { return (Array.isArray(audience) ? audience : [audience]).includes(resource); }

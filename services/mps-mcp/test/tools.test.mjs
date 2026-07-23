@@ -29,6 +29,16 @@ async function call(instance, name, arguments_ = {}, token = "valid") {
   return instance.handle({ method: "tools/call", params: { name, arguments: arguments_ } }, { authorization: `Bearer ${token}` });
 }
 
+async function withServer(env, fetchImpl, run) {
+  const server = createHttpServer({ env, fetchImpl });
+  await new Promise((resolve) => server.listen(0, resolve));
+  try { return await run(server.address().port); } finally { await new Promise((resolve) => server.close(resolve)); }
+}
+
+async function post(port, body, headers = {}) {
+  return fetch(`http://127.0.0.1:${port}/mcp`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
+}
+
 test("tools/list returns MCP tool definitions with object input schemas", async () => {
   const result = await adapter().handle({ method: "tools/list" });
   assert.ok(Array.isArray(result.result.tools));
@@ -53,7 +63,7 @@ test("tool validation returns an MCP error result while unknown methods use JSON
 
 test("write tools do not require read_catalog and preserve locked visual contract", async () => {
   const instance = adapter(["write_draft"]);
-  const draft = await call(instance, "save_flashcard_draft", { card_id: "card-1", patch: { teaching_copy_json: { cue: "breathe" } }, studio_id: "other" });
+  const draft = await call(instance, "save_flashcard_draft", { card_id: "card-1", patch: { teaching_copy_json: { cue: "breathe" } } });
   assert.equal(draft.result.isError, false);
   assert.deepEqual(instance.calls.at(-1), ["updateDraft", "card-1", { teaching_copy_json: { cue: "breathe" } }]);
   const locked = await call(instance, "build_visual_brief", { card_id: "card-1", exercise_id: exercise.exercise.id, pose: {}, style_profile: "other" });
@@ -95,4 +105,53 @@ test("missing bearer receives a protected-resource Bearer challenge", async () =
   assert.equal(response.statusCode, 401);
   assert.match(response.headers["www-authenticate"], /resource_metadata=/);
   await new Promise((resolve) => server.close(resolve));
+});
+
+test("insufficient tool scope returns a reauthorization challenge", async () => {
+  const env = { MPS_API_BASE_URL: "https://api.test", MPS_API_SERVICE_TOKEN: "service-token", MPS_OAUTH_INTROSPECTION_URL: "https://issuer.test/introspect", MPS_OAUTH_CLIENT_ID: "id", MPS_OAUTH_CLIENT_SECRET: "secret", MPS_OAUTH_ISSUER: "https://issuer.test", MPS_RESOURCE_URL: "https://mcp.test/mcp" };
+  const claims = { active: true, iss: env.MPS_OAUTH_ISSUER, aud: env.MPS_RESOURCE_URL, exp: Math.floor(Date.now() / 1000) + 60, studio_id: "studio-01", teacher_id: "teacher-01", scope: "read_catalog" };
+  await withServer(env, async () => new Response(JSON.stringify(claims)), async (port) => {
+    const response = await post(port, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "save_flashcard_draft", arguments: { card_id: "card-1", patch: { category: "Mat" } } } }, { authorization: "Bearer valid" });
+    const body = await response.json();
+    assert.equal(response.status, 401);
+    assert.match(response.headers.get("www-authenticate"), /error="insufficient_scope"/);
+    assert.match(response.headers.get("www-authenticate"), /scope="write_draft"/);
+    assert.match(body.error.data._meta["mcp/www_authenticate"][0], /insufficient_scope/);
+  });
+});
+
+test("notifications return 202 without a body and batches return only responses", async () => {
+  const env = { MPS_API_BASE_URL: "https://api.test", MPS_API_SERVICE_TOKEN: "service-token", MPS_OAUTH_INTROSPECTION_URL: "https://issuer.test/introspect", MPS_OAUTH_CLIENT_ID: "id", MPS_OAUTH_CLIENT_SECRET: "secret", MPS_OAUTH_ISSUER: "https://issuer.test", MPS_RESOURCE_URL: "https://mcp.test/mcp" };
+  await withServer(env, async () => new Response("{}", { status: 401 }), async (port) => {
+    const notification = await post(port, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+    assert.equal(notification.status, 202);
+    assert.equal(await notification.text(), "");
+    const batch = await post(port, [{ jsonrpc: "2.0", id: 1, method: "tools/list" }, { jsonrpc: "2.0", method: "notifications/initialized", params: {} }]);
+    assert.equal(batch.status, 200);
+    const responses = await batch.json();
+    assert.equal(responses.length, 1);
+    assert.equal(responses[0].id, 1);
+    const empty = await post(port, []);
+    assert.equal(empty.status, 400);
+  });
+});
+
+test("MCP request bodies are bounded before authorization", async () => {
+  const env = { MPS_API_BASE_URL: "https://api.test", MPS_API_SERVICE_TOKEN: "service-token", MPS_MCP_MAX_BODY_BYTES: "16", MPS_OAUTH_INTROSPECTION_URL: "https://issuer.test/introspect", MPS_OAUTH_CLIENT_ID: "id", MPS_OAUTH_CLIENT_SECRET: "secret", MPS_OAUTH_ISSUER: "https://issuer.test", MPS_RESOURCE_URL: "https://mcp.test/mcp" };
+  let calls = 0;
+  await withServer(env, async () => { calls += 1; return new Response("{}", { status: 401 }); }, async (port) => {
+    const response = await post(port, "x".repeat(17));
+    assert.equal(response.status, 413);
+    assert.equal(calls, 0);
+  });
+});
+
+test("runtime validation rejects forbidden and unknown tool arguments", async () => {
+  const instance = adapter(["write_draft"]);
+  for (const args of [
+    { card_id: "card-1", patch: { category: "Mat" }, status: "published" },
+    { card_id: "card-1", patch: { category: "Mat" }, teacher_id: "other" }
+  ]) assert.equal((await call(instance, "save_flashcard_draft", args)).result.isError, true);
+  const unlocked = await call(instance, "build_visual_brief", { card_id: "card-1", exercise_id: exercise.exercise.id, pose: {}, outfit: "other" });
+  assert.equal(unlocked.result.isError, true);
 });
