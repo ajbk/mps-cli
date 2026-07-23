@@ -925,6 +925,130 @@ td {
     min-height: 44px;
 }
 
+.flashcard-editor {
+    margin-top: 20px;
+    padding: 20px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+}
+
+.flashcard-editor-head,
+.review-actions .actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.flashcard-editor h3,
+.flashcard-editor h4 {
+    margin: 0;
+}
+
+.flashcard-editor h4 {
+    font-size: 14px;
+}
+
+.flashcard-editor-section {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+}
+
+.flashcard-proposal-note {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    color: var(--accent-dark);
+    background: #fbf2e7;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.flashcard-editor-form {
+    display: grid;
+    gap: 16px;
+}
+
+.flashcard-editor-form textarea {
+    width: 100%;
+    min-height: 68px;
+    resize: vertical;
+}
+
+.locked-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 12px 0 0;
+}
+
+.locked-fields div {
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--field);
+}
+
+.locked-fields dt {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 850;
+    text-transform: uppercase;
+}
+
+.locked-fields dd {
+    margin: 5px 0 0;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.visual-brief pre {
+    overflow-x: auto;
+    margin: 12px 0 0;
+    padding: 12px;
+    border-radius: 10px;
+    background: var(--panel-2);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.flashcard-asset-preview img,
+.flashcard-image-empty {
+    display: block;
+    width: min(100%, 300px);
+    min-height: 180px;
+    margin-top: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    object-fit: contain;
+    background: var(--field);
+}
+
+.flashcard-image-empty {
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.review-actions p {
+    margin: 10px 0;
+    font-size: 13px;
+}
+
+.flashcard-editor-empty {
+    margin: 20px 0 0;
+    padding: 16px;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    color: var(--muted);
+}
+
 .toast {
     position: fixed;
     right: 18px;

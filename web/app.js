@@ -112,6 +112,7 @@ const state = {
     flashcardCategory: '',
     flashcardQuery: '',
     flashcardLevel: 'all',
+    selectedFlashcardId: null,
     plan: null,
     markdown: '',
     data: loadData()
@@ -825,6 +826,7 @@ async function renderFlashcards() {
     $('#flashcard-deck').innerHTML = filtered.length
         ? filtered.map(renderFlashcard).join('')
         : '<p class="muted">No flashcards match the current filters.</p>';
+    await renderFlashcardEditor();
 }
 
 function renderFlashcard(card) {
@@ -873,9 +875,104 @@ async function createFlashcardDraft(cardId) {
     if (!sourceCard) return;
 
     const draft = window.MPS_FLASHCARD_MODEL.createLocalDraft(sourceCard);
+    draft.source_snapshot = {
+        exercise_id: draft.source_exercise_id,
+        style_profile: draft.style_profile
+    };
+    draft.automated_review = { status: 'pending' };
     const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
     await store.saveDraft(draft);
-    showToast(`${sourceCard.name} saved as a local draft`);
+    state.selectedFlashcardId = draft.id;
+    await renderFlashcards();
+    showToast(sourceCard.name + ' is ready for teacher editing');
+}
+
+async function selectedFlashcardDraft() {
+    if (!state.selectedFlashcardId) return null;
+    return window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).getCard(state.selectedFlashcardId);
+}
+
+function editorTextArea(name, label, card) {
+    return '<label class="field"><span>' + label + '</span><textarea name="' + name + '">' +
+        escapeHtml(card[name] || '') + '</textarea></label>';
+}
+
+function renderFlashcardEditorForm(card) {
+    const review = window.MPS_FLASHCARD_REVIEW;
+    const canApprove = card.status === 'needs-review' && review.automatedReviewPassed(card);
+    const canPublish = review.canPublish(card);
+    const image = card.image
+        ? '<img src="' + safeAssetUrl(card.image) + '" alt="Current visual for ' + escapeHtml(card.name) + '">'
+        : '<div class="flashcard-image-empty">No image asset yet</div>';
+    const visualBrief = JSON.stringify({
+        style_profile: 'mono-gesture-ink-pilates-v1',
+        character: 'teacher-01',
+        appearance: 'shoulder-length layered bob, round glasses, off-white cropped camisole, charcoal mid-thigh biker shorts, subtle dusty-rose cheek accent',
+        exercise: card.name,
+        apparatus: card.category
+    }, null, 2);
+    const status = window.MPS_FLASHCARD_MODEL.statusLabel(card.status);
+    const disabled = (condition) => condition ? ' disabled' : '';
+
+    return '<div class="flashcard-editor-head"><div><p class="eyebrow">Teacher review queue</p><h3>' +
+        escapeHtml(card.name) + '</h3></div><span class="flashcard-status">' + escapeHtml(status) +
+        '</span></div><p class="flashcard-proposal-note">Generated values remain proposals until you explicitly save them. Publishing is unavailable in this browser.</p>' +
+        '<form id="flashcard-editor-form" class="flashcard-editor-form"><section class="flashcard-editor-section"><h4>Workbook source · locked</h4>' +
+        '<dl class="locked-fields"><div><dt>Exercise</dt><dd>' + escapeHtml(card.name) + '</dd></div><div><dt>Apparatus</dt><dd>' +
+        escapeHtml(card.category) + '</dd></div><div><dt>Level</dt><dd>' + escapeHtml(card.level) + '</dd></div><div><dt>Objective</dt><dd>' +
+        escapeHtml(card.objective || '-') + '</dd></div></dl></section><section class="flashcard-editor-section"><h4>Teacher-editable proposal</h4>' +
+        editorTextArea('front', 'Front question', card) + editorTextArea('cue', 'Cue', card) +
+        editorTextArea('regress', 'Regression', card) + editorTextArea('progress', 'Progression', card) +
+        '<button class="secondary" type="submit">Save teacher changes</button></section></form>' +
+        '<section class="flashcard-editor-section visual-brief"><h4>Locked visual brief</h4><p><b>Style:</b> mono-gesture-ink-pilates-v1 · <b>Character:</b> teacher-01</p><pre>' +
+        escapeHtml(visualBrief) + '</pre></section><section class="flashcard-editor-section flashcard-asset-preview"><h4>Image asset · version ' +
+        escapeHtml(card.version || 1) + '</h4>' + image + '</section><section class="flashcard-editor-section review-actions"><h4>Review controls</h4><p>Automated review: <b>' +
+        escapeHtml(card.automated_review?.status || 'pending') + '</b> · Teacher review: <b>' +
+        escapeHtml(card.teacher_review?.status || 'not recorded') + '</b></p><div class="actions"><button type="button" data-flashcard-action="generate"' +
+        disabled(!['draft', 'revision-requested'].includes(card.status)) + '>Generate</button><button class="secondary" type="button" data-flashcard-action="generate"' +
+        disabled(card.status !== 'revision-requested') + '>Regenerate</button><button class="secondary" type="button" data-flashcard-action="request-revision"' +
+        disabled(!['needs-review', 'approved'].includes(card.status)) + '>Request revision</button><button class="secondary" type="button" data-flashcard-action="submit-review"' +
+        disabled(card.status !== 'generating') + '>Submit review</button><button class="secondary" type="button" data-flashcard-action="approve"' +
+        disabled(!canApprove) + '>Record teacher approval</button><button class="secondary" type="button" disabled title="Publishing must be performed by an authorized service">Publish (guarded)</button></div>' +
+        '<p class="muted">Publish guard: ' + (canPublish ? 'ready for an authorized publisher' : 'not eligible') +
+        '; it requires approved status, a passed latest automated review, a latest teacher review, and unchanged exercise/style sources.</p></section>';
+}
+
+async function renderFlashcardEditor() {
+    const target = $('#flashcard-editor');
+    const card = await selectedFlashcardDraft();
+    target.innerHTML = card
+        ? renderFlashcardEditorForm(card)
+        : '<p class="flashcard-editor-empty">Create a local draft from the library to add it to the teacher review queue.</p>';
+}
+
+async function saveFlashcardEditor(form) {
+    const card = await selectedFlashcardDraft();
+    if (!card) return;
+    const updated = {
+        ...card,
+        front: form.elements.front.value,
+        cue: form.elements.cue.value,
+        regress: form.elements.regress.value,
+        progress: form.elements.progress.value
+    };
+    await window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).saveDraft(updated);
+    await renderFlashcardEditor();
+    showToast('Teacher changes saved');
+}
+
+async function applyFlashcardAction(action) {
+    const card = await selectedFlashcardDraft();
+    if (!card) return;
+    const details = action === 'request-revision' ? { note: window.prompt('Revision request for this proposal:') || '' } : {};
+    try {
+        const updated = window.MPS_FLASHCARD_REVIEW.transition(card, action, details);
+        await window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).saveDraft(updated);
+        await renderFlashcardEditor();
+        showToast('Teacher action recorded');
+    } catch (error) {
+        showToast(error.message);
+    }
 }
 
 function exportData() {
@@ -1102,6 +1199,18 @@ function attachEvents() {
         if (!categoryTarget) return;
         state.flashcardCategory = categoryTarget.dataset.flashcardCategory;
         renderFlashcards();
+    });
+
+    document.body.addEventListener('submit', (event) => {
+        if (event.target.id !== 'flashcard-editor-form') return;
+        event.preventDefault();
+        saveFlashcardEditor(event.target).catch(() => showToast('Unable to save teacher changes'));
+    });
+
+    document.body.addEventListener('click', (event) => {
+        const actionTarget = event.target.closest('[data-flashcard-action]');
+        if (!actionTarget || actionTarget.disabled) return;
+        applyFlashcardAction(actionTarget.dataset.flashcardAction).catch(() => showToast('Unable to record teacher action'));
     });
 
     ['assessment-student', 'session-student', 'progress-student', 'playbook-student', 'report-student'].forEach((id) => {
