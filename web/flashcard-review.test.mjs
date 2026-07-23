@@ -16,9 +16,22 @@ function card(overrides = {}) {
         version: 1,
         automated_review: { status: 'pending', version: 1 },
         teacher_review: null,
-        source_snapshot: { exercise_id: 'M02', style_profile: 'mono-gesture-ink-pilates-v1' },
+        source_snapshot: {
+            exercise_id: 'M02',
+            style_profile: 'mono-gesture-ink-pilates-v1',
+            name: 'Pelvic Clock',
+            category: 'Mat',
+            apparatus: 'Mat',
+            level: 'Beginner',
+            objective: 'Pelvic awareness'
+        },
         source_exercise_id: 'M02',
         style_profile: 'mono-gesture-ink-pilates-v1',
+        name: 'Pelvic Clock',
+        category: 'Mat',
+        apparatus: 'Mat',
+        level: 'Beginner',
+        objective: 'Pelvic awareness',
         character_id: 'teacher-01',
         outfit: 'off-white thin-strap cropped Pilates camisole and dark charcoal high-waisted mid-thigh biker shorts',
         cheek_accent: '#D98F9A',
@@ -26,7 +39,15 @@ function card(overrides = {}) {
     };
 }
 
-const canonicalSource = { exercise_id: 'M02', style_profile: 'mono-gesture-ink-pilates-v1' };
+const canonicalSource = {
+    exercise_id: 'M02',
+    style_profile: 'mono-gesture-ink-pilates-v1',
+    name: 'Pelvic Clock',
+    category: 'Mat',
+    apparatus: 'Mat',
+    level: 'Beginner',
+    objective: 'Pelvic awareness'
+};
 
 test('a draft can move to generating', async () => {
     const review = await loadReview();
@@ -113,6 +134,31 @@ test('canonical source prevents a mutable snapshot bypass', async () => {
         source_exercise_id: 'M03',
         style_profile: 'other-style',
         source_snapshot: { exercise_id: 'M03', style_profile: 'other-style' },
+        automated_review: { status: 'passed', version: 1 },
+        teacher_review: { reviewer: 'Teacher', status: 'approved', version: 1 }
+    });
+
+    assert.equal(review.sourceIsUnchanged(approved, canonicalSource), false);
+    assert.equal(review.canPublish(approved, canonicalSource), false);
+});
+
+test('canonical source rejects a hostile mutation of every workbook-locked field', async () => {
+    const review = await loadReview();
+    const approved = card({
+        status: 'approved',
+        name: 'Hostile name',
+        category: 'Chair',
+        apparatus: 'Chair',
+        level: 'Advanced',
+        objective: 'Hostile objective',
+        source_snapshot: {
+            ...canonicalSource,
+            name: 'Hostile name',
+            category: 'Chair',
+            apparatus: 'Chair',
+            level: 'Advanced',
+            objective: 'Hostile objective'
+        },
         automated_review: { status: 'passed', version: 1 },
         teacher_review: { reviewer: 'Teacher', status: 'approved', version: 1 }
     });

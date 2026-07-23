@@ -13,11 +13,20 @@
 
     function sourceIsUnchanged(card, canonicalSource) {
         const snapshot = card?.source_snapshot;
+        const lockedFields = [
+            ['exercise_id', 'source_exercise_id'],
+            ['style_profile', 'style_profile'],
+            ['name', 'name'],
+            ['category', 'category'],
+            ['apparatus', 'apparatus'],
+            ['level', 'level'],
+            ['objective', 'objective']
+        ];
         return Boolean(snapshot && canonicalSource)
-            && snapshot.exercise_id === canonicalSource.exercise_id
-            && snapshot.style_profile === canonicalSource.style_profile
-            && card.source_exercise_id === canonicalSource.exercise_id
-            && card.style_profile === canonicalSource.style_profile;
+            && lockedFields.every(([sourceField, cardField]) =>
+                snapshot[sourceField] === canonicalSource[sourceField]
+                && card?.[cardField] === canonicalSource[sourceField]
+            );
     }
 
     function visualContractMatches(card) {

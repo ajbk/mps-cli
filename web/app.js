@@ -1,6 +1,22 @@
 const STORAGE_KEY = 'mpsClientStudio.v2';
 const FLASHCARD_SELECTED_KEY = 'mps.flashcard.selectedDraftId';
 
+function safeSelectedFlashcardRead() {
+    try {
+        return localStorage.getItem(FLASHCARD_SELECTED_KEY) || null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function safeSelectedFlashcardWrite(cardId) {
+    try {
+        localStorage.setItem(FLASHCARD_SELECTED_KEY, cardId);
+    } catch (error) {
+        // The flashcard editor remains usable when browser storage is blocked.
+    }
+}
+
 const archetypes = [
     'Office Syndrome',
     'Strong but Tight',
@@ -113,7 +129,7 @@ const state = {
     flashcardCategory: '',
     flashcardQuery: '',
     flashcardLevel: 'all',
-    selectedFlashcardId: localStorage.getItem(FLASHCARD_SELECTED_KEY) || null,
+    selectedFlashcardId: safeSelectedFlashcardRead(),
     plan: null,
     markdown: '',
     data: loadData()
@@ -875,16 +891,32 @@ async function createFlashcardDraft(cardId) {
     const sourceCard = flashcards().find((card) => card.id === cardId);
     if (!sourceCard) return;
 
+    const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
+    const draftId = window.MPS_FLASHCARD_MODEL.draftKey(cardId);
+    const existingDraft = await store.getCard(draftId);
+    if (existingDraft) {
+        state.selectedFlashcardId = existingDraft.id;
+        safeSelectedFlashcardWrite(existingDraft.id);
+        await renderFlashcards();
+        showToast(sourceCard.name + ' draft reopened');
+        return;
+    }
+
     const draft = window.MPS_FLASHCARD_MODEL.createLocalDraft(sourceCard);
+    draft.apparatus = sourceCard.category;
     draft.source_snapshot = {
         exercise_id: draft.source_exercise_id,
-        style_profile: draft.style_profile
+        style_profile: draft.style_profile,
+        name: sourceCard.name,
+        category: sourceCard.category,
+        apparatus: sourceCard.category,
+        level: sourceCard.level,
+        objective: sourceCard.objective || ''
     };
     draft.automated_review = { status: 'pending', version: draft.version };
-    const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
     await store.saveDraft(draft);
     state.selectedFlashcardId = draft.id;
-    localStorage.setItem(FLASHCARD_SELECTED_KEY, draft.id);
+    safeSelectedFlashcardWrite(draft.id);
     await renderFlashcards();
     showToast(sourceCard.name + ' is ready for teacher editing');
 }
@@ -902,7 +934,12 @@ function canonicalSourceForCard(card) {
     if (!source) return null;
     return {
         exercise_id: source.id,
-        style_profile: window.MPS_FLASHCARD_REVIEW.visualContract.style_profile
+        style_profile: window.MPS_FLASHCARD_REVIEW.visualContract.style_profile,
+        name: source.name,
+        category: source.category,
+        apparatus: source.category,
+        level: source.level,
+        objective: source.objective || ''
     };
 }
 
@@ -988,7 +1025,8 @@ async function saveFlashcardEditor(form) {
         front: form.elements.front.value,
         cue: form.elements.cue.value,
         regress: form.elements.regress.value,
-        progress: form.elements.progress.value
+        progress: form.elements.progress.value,
+        proposed_changes: null
     };
     await window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).saveDraft(updated);
     await renderFlashcardEditor();
