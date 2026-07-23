@@ -11,11 +11,12 @@ import {
 import { reviewGeneratedAsset } from './validator.mjs';
 
 export class RetryablePersistenceError extends Error {
-  constructor() {
+  constructor(claimId = undefined) {
     super('visual worker persistence is unavailable; retry the job');
     this.name = 'RetryablePersistenceError';
     this.code = 'visual_worker_persistence_retryable';
     this.retryable = true;
+    if (claimId !== undefined) this.claimId = claimId;
   }
 }
 
@@ -255,6 +256,23 @@ function resolveJobIdentifier(field, values) {
   return value;
 }
 
+function resolveAttemptClaimId({ job, claimId, attemptId }) {
+  const present = [
+    claimId,
+    attemptId,
+    job?.claimId,
+    job?.attemptId,
+    job?.claim_id,
+    job?.attempt_id,
+    job?.input_json?.claim_id,
+    job?.input_json?.attempt_id,
+    job?.input?.claim_id,
+    job?.input?.attempt_id,
+  ].filter((value) => value !== undefined && value !== null);
+  if (present.length === 0) return createAttemptClaimId();
+  return resolveJobIdentifier('claimId', present);
+}
+
 /**
  * Runs one generation/review job. The returned status is deliberately limited
  * to worker outcomes: needs-review, revision-requested, or failed. Approval
@@ -270,6 +288,8 @@ export async function processVisualJob({
   visionReviewer,
   report,
   persistenceReporter,
+  claimId: requestedClaimId,
+  attemptId: requestedAttemptId,
 }) {
   if (typeof persistenceReporter !== 'function' || persistenceReporter.durable !== true) {
     throw new Error('a secure worker persistence reporter is required');
@@ -292,17 +312,30 @@ export async function processVisualJob({
       { code: 'ownership_mismatch', field: 'brief' },
     ]);
   }
-  const attemptClaimId = createAttemptClaimId();
-  const claim = await persistenceReporter.claim({ jobId, cardId, claimId: attemptClaimId });
+  const attemptClaimId = resolveAttemptClaimId({
+    job,
+    claimId: requestedClaimId,
+    attemptId: requestedAttemptId,
+  });
+  let claim;
+  try {
+    claim = await persistenceReporter.claim({ jobId, cardId, claimId: attemptClaimId });
+  } catch (error) {
+    if (error instanceof RetryablePersistenceError) {
+      throw new RetryablePersistenceError(attemptClaimId);
+    }
+    throw error;
+  }
   const claimStatus = claim?.status;
   const claimId = assertSafeIdentifier(claim?.claim_id ?? claim?.claimId, 'claimId');
   if (claimStatus === 'running' && claimId !== attemptClaimId) {
-    throw new RetryablePersistenceError();
+    throw new RetryablePersistenceError(attemptClaimId);
   }
   if (claimStatus === 'succeeded' || claimStatus === 'failed') {
     return {
       jobId,
       cardId,
+      claimId,
       status: claimStatus,
       reconciled: true,
     };
@@ -311,7 +344,7 @@ export async function processVisualJob({
   let persistenceAttempted = false;
 
   try {
-    await emitStatus(status, { jobId, status: 'running' });
+    await emitStatus(status, { jobId, claimId, status: 'running' });
     const referenceErrors = validateReferenceAssets(referenceAssets, undefined, manifest);
     if (referenceErrors.length > 0) {
       throw new VisualContractError('reference assets do not satisfy the asset policy', referenceErrors);
@@ -342,6 +375,7 @@ export async function processVisualJob({
     const result = {
       jobId,
       cardId,
+      claimId,
       status: 'succeeded',
       cardStatus: review.status,
       asset: { ...asset, status: review.assetStatus },
@@ -364,12 +398,13 @@ export async function processVisualJob({
         await persistenceReporter(terminalSuccess);
         persistenceAttempted = true;
       } catch {
-        throw new RetryablePersistenceError();
+        throw new RetryablePersistenceError(claimId);
       }
     }
     await emitStatus(status, {
       jobId,
       cardId,
+      claimId,
       status: 'succeeded',
       cardStatus: review.status,
       assetStatus: review.assetStatus,
@@ -377,7 +412,8 @@ export async function processVisualJob({
     return result;
   } catch (error) {
     if (error instanceof RetryablePersistenceError) {
-      throw error;
+      if (error.claimId === claimId) throw error;
+      throw new RetryablePersistenceError(claimId);
     }
     const failure = {
       jobId,
@@ -392,7 +428,7 @@ export async function processVisualJob({
       try {
         await persistenceReporter(failure);
       } catch {
-        throw new RetryablePersistenceError();
+        throw new RetryablePersistenceError(claimId);
       }
     }
     await emitStatus(status, failure);

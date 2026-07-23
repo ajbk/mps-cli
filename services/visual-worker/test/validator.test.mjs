@@ -319,6 +319,7 @@ test('worker emits status events and leaves a passing asset in needs-review', as
   assert.equal(result.status, 'succeeded');
   assert.equal(result.cardStatus, 'needs-review');
   assert.equal(result.asset.status, 'needs-review');
+  assert.equal(result.claimId, persistenceRequests[0].body.claim_id);
   assert.deepEqual(events.map((event) => event.status), ['running', 'succeeded']);
   assert.equal(persistenceRequests[0].url.endsWith('/claim'), true);
   assert.match(persistenceRequests[0].body.claim_id, /^attempt-/);
@@ -501,6 +502,80 @@ test('lost success response retries the original terminal event instead of faili
   assert.deepEqual(terminalEvents.map((event) => event.status), ['succeeded', 'succeeded']);
   assert.match(terminalEvents[0].claimId, /^attempt-/);
   assert.deepEqual(terminalEvents.map((event) => event.claimId), [terminalEvents[0].claimId, terminalEvents[0].claimId]);
+});
+
+test('lost claim response can retry with the same persisted claim ID', async () => {
+  const claimAttempts = [];
+  let persistedClaimId;
+  const reporter = createWorkerPersistenceReporter({
+    baseUrl: 'https://mps.internal',
+    workerToken: 'worker-secret',
+    fetchImpl: async (url, options) => {
+      const payload = JSON.parse(options.body);
+      if (String(url).endsWith('/claim')) {
+        claimAttempts.push(payload.claim_id);
+        persistedClaimId ??= payload.claim_id;
+        if (claimAttempts.length === 1) throw new Error('response lost after commit');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ status: 'running', claim_id: persistedClaimId }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: payload.status }),
+      };
+    },
+  });
+  const job = { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' };
+  const generation = {
+    generator: createImageGenerator({
+      generate: async () => ({
+        asset: {
+          id: 'asset-1',
+          path: 'object://mps-flashcards/card-1.png',
+          mimeType: 'image/png',
+        },
+      }),
+    }),
+    visionReviewer: createVisionReviewer({
+      review: async () => ({ passed: true, checks: passingChecks(), findings: [] }),
+    }),
+    persistenceReporter: reporter,
+  };
+  let retryClaimId;
+  await assert.rejects(
+    () => processVisualJob({
+      job,
+      brief: brief(),
+      exerciseContext,
+      manifest,
+      referenceAssets,
+      ...generation,
+    }),
+    (error) => {
+      retryClaimId = error.claimId;
+      return error.code === 'visual_worker_persistence_retryable'
+        && error.retryable === true
+        && /^attempt-/.test(error.claimId)
+        && error.claimId === persistedClaimId;
+    },
+  );
+
+  const result = await processVisualJob({
+    job: { ...job, claimId: retryClaimId },
+    brief: brief(),
+    exerciseContext,
+    manifest,
+    referenceAssets,
+    ...generation,
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.claimId, retryClaimId);
+  assert.deepEqual(claimAttempts, [retryClaimId, retryClaimId]);
 });
 
 test('a full retry reconciles an already committed terminal claim before generation', async () => {
