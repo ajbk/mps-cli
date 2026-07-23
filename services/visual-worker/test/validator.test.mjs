@@ -17,6 +17,8 @@ import {
 } from '../src/validator.mjs';
 import {
   createImageGenerator,
+  createWorkerPersistenceReporter,
+  createWorkerPersistenceReporterFromEnv,
   createVisionReviewer,
   processVisualJob,
 } from '../src/worker.mjs';
@@ -52,6 +54,22 @@ const exerciseContext = {
   },
 };
 
+const referenceAssets = {
+  canonicalSheet: {
+    id: 'teacher-01-v5',
+    version: 5,
+    key: 'object://mps-flashcards/character/teacher-01-v5.png',
+  },
+  references: [
+    { id: 'face-front', role: 'face_identity', key: 'object://mps-flashcards/character/face-front.png' },
+    { id: 'body-front', role: 'full_body_front', key: 'object://mps-flashcards/character/body-front.png' },
+    { id: 'body-side', role: 'full_body_side', key: 'object://mps-flashcards/character/body-side.png' },
+    { id: 'body-back', role: 'full_body_back', key: 'object://mps-flashcards/character/body-back.png' },
+    { id: 'outfit-pilates-v1', role: 'outfit', key: 'object://mps-flashcards/character/outfit-v1.png' },
+    { id: 'cadillac-studio', role: 'equipment_context', key: 'object://mps-flashcards/studio/cadillac.png' },
+  ],
+};
+
 function brief(overrides = {}) {
   return {
     id: 'brief-1',
@@ -76,6 +94,17 @@ function brief(overrides = {}) {
 
 function passingChecks() {
   return Object.fromEntries(REQUIRED_VISUAL_CHECKS.map((name) => [name, { passed: true }]));
+}
+
+function testPersistenceReporter(onRequest = () => {}) {
+  return createWorkerPersistenceReporter({
+    baseUrl: 'https://mps.internal',
+    workerToken: 'test-worker-token',
+    fetchImpl: async (url, options) => {
+      onRequest(String(url), options);
+      return { ok: true };
+    },
+  });
 }
 
 test('rejects a brief that changes the visual style profile', () => {
@@ -124,15 +153,37 @@ test('accepts only approved repo-relative or object-store asset paths', () => {
   assert.equal(isSafeAssetPath('https://example.test/card-1.png'), false);
 });
 
-test('compiles a deterministic payload with contact points, identity, and negative constraints', () => {
-  const payload = compileGenerationPayload({ brief: brief(), exerciseContext, manifest });
+test('requires a canonical sheet and complete resolved reference pack', () => {
+  assert.throws(
+    () => compileGenerationPayload({ brief: brief(), exerciseContext, manifest }),
+    (error) => error.errors.some((entry) => entry.code === 'invalid_reference_assets'),
+  );
+  assert.throws(
+    () => compileGenerationPayload({
+      brief: brief(),
+      exerciseContext,
+      manifest,
+      referenceAssets: { ...referenceAssets, canonicalSheet: undefined },
+    }),
+    (error) => error.errors.some((entry) => entry.code === 'canonical_sheet_required'),
+  );
+});
+
+test('compiles a deterministic payload with canonical refs, contact points, and extra negatives', () => {
+  const payload = compileGenerationPayload({
+    brief: brief({ must_not_show_json: [...REQUIRED_NEGATIVE_CONSTRAINTS, 'photorealism', 'gradients'] }),
+    exerciseContext,
+    manifest,
+    referenceAssets,
+  });
 
   assert.equal(payload.styleProfile, STYLE_PROFILE);
   assert.equal(payload.character.id, CHARACTER_ID);
   assert.equal(payload.character.outfit, LOCKED_OUTFIT);
   assert.equal(payload.character.cheekAccent, CHEEK_ACCENT);
+  assert.equal(payload.character.canonicalSheet.path, referenceAssets.canonicalSheet.key);
   assert.deepEqual(payload.pose.contactPoints, ['sacrum', 'feet']);
-  assert.deepEqual(payload.negativeConstraints, [...REQUIRED_NEGATIVE_CONSTRAINTS]);
+  assert.deepEqual(payload.negativeConstraints, [...REQUIRED_NEGATIVE_CONSTRAINTS, 'photorealism', 'gradients']);
   assert.equal(payload.output.noWatermarkLayer, true);
 });
 
@@ -177,6 +228,7 @@ test('failed visual checks become revision-requested and never approval', async 
   assert.equal(result.assetStatus, 'rejected');
   assert.notEqual(result.status, 'approved');
   assert.notEqual(result.status, 'published');
+  assert.equal(JSON.stringify(result).includes('glasses are missing'), false);
 });
 
 test('worker emits status events and leaves a passing asset in needs-review', async () => {
@@ -184,7 +236,8 @@ test('worker emits status events and leaves a passing asset in needs-review', as
   const generator = createImageGenerator({
     generate: async ({ brief: compiledBrief, referenceAssets }) => {
       assert.equal(compiledBrief.styleProfile, STYLE_PROFILE);
-      assert.equal(referenceAssets[0].role, 'face_identity');
+      assert.equal(referenceAssets.canonicalSheet.path, referenceAssetsForGenerator.canonicalSheet.path);
+      assert.equal(referenceAssets.references[0].role, 'face_identity');
       return {
         asset: {
           id: 'asset-1',
@@ -195,20 +248,190 @@ test('worker emits status events and leaves a passing asset in needs-review', as
       };
     },
   });
+  const referenceAssetsForGenerator = {
+    canonicalSheet: {
+      id: 'teacher-01-v5',
+      version: 5,
+      path: referenceAssets.canonicalSheet.key,
+    },
+    references: referenceAssets.references.map((reference) => ({
+      id: reference.id,
+      role: reference.role,
+      path: reference.key,
+    })),
+  };
   const result = await processVisualJob({
-    job: { id: 'job-1' },
+    job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
     brief: brief(),
     exerciseContext,
     manifest,
+    referenceAssets,
     generator,
     visionReviewer: createVisionReviewer({
       review: async () => ({ passed: true, checks: passingChecks(), findings: [] }),
     }),
     report: async (event) => events.push(event),
+    persistenceReporter: testPersistenceReporter(),
   });
 
   assert.equal(result.status, 'succeeded');
   assert.equal(result.cardStatus, 'needs-review');
   assert.equal(result.asset.status, 'needs-review');
   assert.deepEqual(events.map((event) => event.status), ['running', 'succeeded']);
+});
+
+test('worker rejects production execution without an atomic persistence reporter', async () => {
+  await assert.rejects(
+    () => processVisualJob({
+      job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
+      brief: brief(),
+      exerciseContext,
+      manifest,
+      referenceAssets,
+    }),
+    /secure worker persistence reporter is required/,
+  );
+  await assert.rejects(
+    () => processVisualJob({
+      job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
+      brief: brief(),
+      exerciseContext,
+      manifest,
+      referenceAssets,
+      persistenceReporter: async () => {},
+    }),
+    /secure worker persistence reporter is required/,
+  );
+});
+
+test('unsafe provider paths fail closed without echoing the raw path', async () => {
+  const events = [];
+  const result = await processVisualJob({
+    job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
+    brief: brief(),
+    exerciseContext,
+    manifest,
+    referenceAssets,
+    generator: createImageGenerator({
+      generate: async () => ({
+        asset: {
+          id: 'asset-1',
+          cardId: 'attacker-card',
+          briefId: 'attacker-brief',
+          path: '/Users/secret/provider-output.png',
+          mimeType: 'image/png',
+        },
+      }),
+    }),
+    visionReviewer: createVisionReviewer({ review: async () => ({ passed: true, checks: passingChecks() }) }),
+    report: async (event) => events.push(event),
+    persistenceReporter: testPersistenceReporter(),
+  });
+
+  const output = JSON.stringify({ result, events });
+  assert.equal(result.status, 'failed');
+  assert.equal(output.includes('/Users/secret/provider-output.png'), false);
+  assert.equal(output.includes('provider-output'), false);
+});
+
+test('provider and vision exceptions are reduced to generic worker errors', async () => {
+  const providerFailure = await processVisualJob({
+    job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
+    brief: brief(),
+    exerciseContext,
+    manifest,
+    referenceAssets,
+    generator: createImageGenerator({
+      generate: async () => { throw new Error('provider secret response body'); },
+    }),
+    persistenceReporter: testPersistenceReporter(),
+  });
+  assert.equal(providerFailure.error.message, 'image generation or visual review failed');
+  assert.equal(JSON.stringify(providerFailure).includes('provider secret'), false);
+
+  const visionFailure = await processVisualJob({
+    job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
+    brief: brief(),
+    exerciseContext,
+    manifest,
+    referenceAssets,
+    generator: createImageGenerator({
+      generate: async () => ({
+        asset: { id: 'asset-1', path: 'object://mps-flashcards/card-1.png', mimeType: 'image/png' },
+      }),
+    }),
+    visionReviewer: createVisionReviewer({
+      review: async () => { throw new Error('vision provider private detail'); },
+    }),
+    persistenceReporter: testPersistenceReporter(),
+  });
+  assert.equal(visionFailure.error.message, 'image generation or visual review failed');
+  assert.equal(JSON.stringify(visionFailure).includes('private detail'), false);
+});
+
+test('persistence reporter receives trusted ownership and terminal-only data', async () => {
+  let persisted;
+  const result = await processVisualJob({
+    job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
+    brief: brief(),
+    exerciseContext,
+    manifest,
+    referenceAssets,
+    generator: createImageGenerator({
+      generate: async () => ({
+        asset: {
+          id: 'asset-1',
+          cardId: 'attacker-card',
+          briefId: 'attacker-brief',
+          path: 'object://mps-flashcards/card-1.png',
+          mimeType: 'image/png',
+        },
+      }),
+    }),
+    visionReviewer: createVisionReviewer({
+      review: async () => ({ passed: true, checks: passingChecks(), findings: [] }),
+    }),
+    persistenceReporter: testPersistenceReporter((_url, options) => {
+      persisted = JSON.parse(options.body);
+    }),
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(persisted.status, 'succeeded');
+  assert.equal(persisted.asset.brief_id, 'brief-1');
+  assert.equal('cardId' in persisted, false);
+  assert.equal('generationPayload' in persisted, false);
+});
+
+test('HTTP persistence reporter sends only the server callback contract', async () => {
+  let request;
+  const reporter = createWorkerPersistenceReporter({
+    baseUrl: 'https://mps.internal',
+    workerToken: 'worker-secret',
+    fetchImpl: async (url, options) => {
+      request = { url: String(url), options };
+      return { ok: true, json: async () => ({ status: 'failed' }) };
+    },
+  });
+  await reporter({ jobId: 'job-1', cardId: 'card-1', status: 'failed', error: { message: 'hidden' } });
+
+  assert.equal(request.url, 'https://mps.internal/api/internal/flashcards/card-1/jobs/job-1/complete');
+  assert.equal(request.options.headers.authorization, 'Bearer worker-secret');
+  assert.deepEqual(JSON.parse(request.options.body), { status: 'failed' });
+});
+
+test('worker persistence reporter reads its dedicated server-only environment contract', async () => {
+  let request;
+  const reporter = createWorkerPersistenceReporterFromEnv({
+    env: {
+      MPS_VISUAL_WORKER_API_BASE_URL: 'https://mps.internal',
+      MPS_VISUAL_WORKER_TOKEN: 'worker-secret',
+    },
+    fetchImpl: async (url, options) => {
+      request = { url: String(url), options };
+      return { ok: true };
+    },
+  });
+  await reporter({ jobId: 'job-1', cardId: 'card-1', status: 'failed' });
+  assert.equal(request.options.headers.authorization, 'Bearer worker-secret');
 });

@@ -1,4 +1,6 @@
 import {
+  assertSafeAssetPath,
+  assertSafeIdentifier,
   compileGenerationPayload,
   validateReferenceAssets,
   VisualContractError,
@@ -7,11 +9,18 @@ import { reviewGeneratedAsset } from './validator.mjs';
 
 function publicError(error) {
   if (error instanceof VisualContractError) {
-    return { code: 'visual_contract_invalid', message: error.message, details: error.errors };
+    return {
+      code: 'visual_contract_invalid',
+      message: 'visual contract validation failed',
+      details: error.errors.map((entry) => ({
+        code: entry.code ?? 'contract_invalid',
+        field: entry.field,
+      })),
+    };
   }
   return {
     code: 'visual_worker_failed',
-    message: error instanceof Error ? error.message : 'visual worker failed',
+    message: 'image generation or visual review failed',
   };
 }
 
@@ -51,7 +60,77 @@ export function createStatusReporter({ report }) {
   return async (event) => report(Object.freeze({ ...event }));
 }
 
-function normalizeGeneratedAsset(output, jobId) {
+export function createWorkerPersistenceReporter({ baseUrl, workerToken, fetchImpl = fetch }) {
+  if (typeof baseUrl !== 'string' || baseUrl.trim() === '') throw new Error('worker persistence base URL is required');
+  if (typeof workerToken !== 'string' || workerToken.trim() === '') throw new Error('worker persistence token is required');
+  assertFunction(fetchImpl, 'fetchImpl');
+  const root = new URL(baseUrl);
+  const reporter = async (event) => {
+    if (!['succeeded', 'failed'].includes(event?.status)) {
+      throw new Error('worker persistence accepts terminal events only');
+    }
+    const cardId = assertSafeIdentifier(event.cardId, 'cardId');
+    const jobId = assertSafeIdentifier(event.jobId, 'jobId');
+    const payload = { status: event.status };
+    if (event.status === 'succeeded') {
+      if (!event.asset || !event.review) throw new Error('successful worker events require asset and review');
+      const assetId = assertSafeIdentifier(event.asset.id, 'assetId');
+      const briefId = assertSafeIdentifier(event.asset.briefId, 'briefId');
+      assertSafeAssetPath(event.asset.path);
+      if (event.asset.cardId !== undefined && event.asset.cardId !== cardId) {
+        throw new VisualContractError('worker asset ownership is invalid', [
+          { code: 'ownership_mismatch', field: 'asset.cardId' },
+        ]);
+      }
+      if (event.asset.providerJobId !== null && event.asset.providerJobId !== undefined) {
+        assertSafeIdentifier(event.asset.providerJobId, 'providerJobId');
+      }
+      payload.asset = {
+        id: assetId,
+        brief_id: briefId,
+        repo_path: event.asset.path,
+        provider_job_id: event.asset.providerJobId,
+        version: event.asset.version,
+      };
+      payload.review = {
+        id: `review-${jobId}`,
+        asset_id: assetId,
+        passed: event.review.passed === true,
+        findings_json: Array.isArray(event.review.findings)
+          ? event.review.findings.map((finding) => ({
+            code: 'visual_finding',
+            severity: finding?.severity === 'warning' ? 'warning' : 'error',
+          }))
+          : [],
+      };
+    }
+    const response = await fetchImpl(new URL(
+      `/api/internal/flashcards/${encodeURIComponent(cardId)}/jobs/${encodeURIComponent(jobId)}/complete`,
+      root,
+    ), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${workerToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response?.ok) throw new Error('worker persistence request failed');
+    return undefined;
+  };
+  Object.defineProperty(reporter, 'durable', { value: true });
+  return reporter;
+}
+
+export function createWorkerPersistenceReporterFromEnv({ env = process.env, fetchImpl = fetch } = {}) {
+  return createWorkerPersistenceReporter({
+    baseUrl: env.MPS_VISUAL_WORKER_API_BASE_URL,
+    workerToken: env.MPS_VISUAL_WORKER_TOKEN,
+    fetchImpl,
+  });
+}
+
+function normalizeGeneratedAsset(output, { jobId, cardId, briefId }) {
   const candidate = output?.asset ?? output;
   if (!candidate || typeof candidate !== 'object') {
     throw new Error('image generator must return an asset object');
@@ -59,15 +138,19 @@ function normalizeGeneratedAsset(output, jobId) {
   const id = candidate.id ?? candidate.assetId;
   const path = candidate.path ?? candidate.repo_path ?? candidate.assetPath;
   if (typeof id !== 'string' || id.trim() === '') throw new Error('generated asset requires an ID');
+  assertSafeIdentifier(id, 'assetId');
   if (typeof path !== 'string' || path.trim() === '') throw new Error('generated asset requires a path');
+  assertSafeAssetPath(path);
   const version = candidate.version ?? 1;
   if (!Number.isInteger(version) || version < 1) throw new Error('generated asset version must be a positive integer');
+  const providerJobId = candidate.providerJobId ?? candidate.provider_job_id ?? null;
+  if (providerJobId !== null) assertSafeIdentifier(providerJobId, 'providerJobId');
   return {
     id,
-    cardId: candidate.cardId,
-    briefId: candidate.briefId,
+    cardId,
+    briefId,
     path,
-    providerJobId: candidate.providerJobId ?? candidate.provider_job_id ?? null,
+    providerJobId,
     version,
     mimeType: candidate.mimeType ?? candidate.mime_type,
     width: candidate.width,
@@ -78,7 +161,24 @@ function normalizeGeneratedAsset(output, jobId) {
 }
 
 async function emitStatus(report, event) {
-  await report(event);
+  try {
+    await report(event);
+  } catch {
+    // Status observers are telemetry; persistence is handled by the required
+    // terminal persistence reporter and must not be replaced by a no-op.
+  }
+}
+
+function resolveJobIdentifier(field, values) {
+  const present = values.filter((value) => value !== undefined && value !== null);
+  const value = present[0];
+  assertSafeIdentifier(value, field);
+  if (present.some((candidate) => candidate !== value)) {
+    throw new VisualContractError('worker job ownership is inconsistent', [
+      { code: 'ownership_mismatch', field },
+    ]);
+  }
+  return value;
 }
 
 /**
@@ -95,9 +195,28 @@ export async function processVisualJob({
   generator,
   visionReviewer,
   report,
+  persistenceReporter,
 }) {
-  const jobId = job?.id ?? 'unidentified-job';
+  if (typeof persistenceReporter !== 'function' || persistenceReporter.durable !== true) {
+    throw new Error('a secure worker persistence reporter is required');
+  }
+  const jobId = resolveJobIdentifier('jobId', [job?.id]);
+  const cardId = resolveJobIdentifier('cardId', [job?.cardId, job?.card_id, job?.input_json?.card_id, job?.input?.card_id]);
+  const briefId = resolveJobIdentifier('briefId', [
+    job?.briefId,
+    job?.brief_id,
+    job?.input_json?.brief_id,
+    job?.input?.brief_id,
+  ]);
+  assertSafeIdentifier(brief?.id, 'brief.id');
+  assertSafeIdentifier(brief?.card_id, 'brief.card_id');
+  if (brief?.id !== briefId || brief?.card_id !== cardId) {
+    throw new VisualContractError('worker job ownership does not match the visual brief', [
+      { code: 'ownership_mismatch', field: 'brief' },
+    ]);
+  }
   const status = createStatusReporter({ report });
+  let persistenceAttempted = false;
 
   try {
     await emitStatus(status, { jobId, status: 'running' });
@@ -116,9 +235,12 @@ export async function processVisualJob({
     }
     const generated = await generator.generateDraft({
       brief: generationPayload,
-      referenceAssets: generationPayload.character.referenceRoles,
+      referenceAssets: {
+        canonicalSheet: generationPayload.character.canonicalSheet,
+        references: generationPayload.character.referenceRoles,
+      },
     });
-    const asset = normalizeGeneratedAsset(generated, jobId);
+    const asset = normalizeGeneratedAsset(generated, { jobId, cardId, briefId });
     const review = await reviewGeneratedAsset({
       asset,
       brief,
@@ -127,14 +249,26 @@ export async function processVisualJob({
     });
     const result = {
       jobId,
+      cardId,
       status: 'succeeded',
       cardStatus: review.status,
       asset: { ...asset, status: review.assetStatus },
       review,
       generationPayload,
     };
+    if (persistenceReporter) {
+      await persistenceReporter({
+        jobId,
+        cardId,
+        status: result.status,
+        asset: result.asset,
+        review: result.review,
+      });
+      persistenceAttempted = true;
+    }
     await emitStatus(status, {
       jobId,
+      cardId,
       status: 'succeeded',
       cardStatus: review.status,
       assetStatus: review.assetStatus,
@@ -143,10 +277,19 @@ export async function processVisualJob({
   } catch (error) {
     const failure = {
       jobId,
+      cardId,
       status: 'failed',
       cardStatus: 'revision-requested',
       error: publicError(error),
     };
+    if (persistenceReporter && !persistenceAttempted) {
+      persistenceAttempted = true;
+      try {
+        await persistenceReporter(failure);
+      } catch {
+        // The worker cannot safely expose callback/provider errors to clients.
+      }
+    }
     await emitStatus(status, failure);
     return failure;
   }

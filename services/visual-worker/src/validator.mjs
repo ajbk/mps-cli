@@ -75,19 +75,33 @@ function checksFrom(review) {
   return {};
 }
 
+function sanitizedChecks(review) {
+  const source = checksFrom(review);
+  return Object.fromEntries(REQUIRED_VISUAL_CHECKS.map((name) => [name, {
+    passed: source[name]?.passed === true,
+  }]));
+}
+
+function sanitizedProviderFindings(review) {
+  if (!Array.isArray(review?.findings)) return [];
+  return review.findings.map((finding) => ({
+    code: 'vision_finding',
+    severity: finding?.severity === 'warning' ? 'warning' : 'error',
+  }));
+}
+
 function visionFindings(review) {
-  const findings = Array.isArray(review?.findings) ? [...review.findings] : [];
-  const checks = checksFrom(review);
+  const findings = sanitizedProviderFindings(review);
+  const source = checksFrom(review);
+  const checks = sanitizedChecks(review);
   for (const name of REQUIRED_VISUAL_CHECKS) {
-    const check = checks[name];
+    const check = source[name];
     if (!isRecord(check) || check.passed !== true) {
       findings.push({
         code: 'visual_check_failed',
         severity: 'error',
         check: name,
-        message: isRecord(check) && typeof check.message === 'string'
-          ? check.message
-          : `vision reviewer did not pass ${name}`,
+        message: `vision reviewer failed ${name}`,
       });
     }
   }

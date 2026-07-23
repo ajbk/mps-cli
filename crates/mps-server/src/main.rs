@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use mps_server::{
     app, AppState, AuthContext, ServerConfig, AUTOMATED_REVIEW, DEFAULT_CATALOG_EXPORT_PATH,
-    GENERATE_ASSET, READ_CATALOG, SUBMIT_REVIEW, WRITE_DRAFT,
+    GENERATE_ASSET, READ_CATALOG, SUBMIT_REVIEW, VISUAL_WORKER, WRITE_DRAFT,
 };
 use mps_db::AuditActorKind;
 use serde_json::json;
@@ -20,6 +20,8 @@ struct StaticTokenAuth {
     automated_review_bearer_token: String,
     automated_review_context: AuthContext,
     mcp_service_bearer_token: String,
+    visual_worker_bearer_token: String,
+    visual_worker_context: AuthContext,
 }
 
 #[tokio::main]
@@ -38,12 +40,12 @@ async fn main() -> Result<()> {
         .filter(|permission| !permission.is_empty())
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    if teacher_permissions
-        .iter()
-        .any(|permission| permission.as_str() == AUTOMATED_REVIEW)
+    if teacher_permissions.iter().any(|permission| {
+        matches!(permission.as_str(), AUTOMATED_REVIEW | VISUAL_WORKER)
+    })
     {
         anyhow::bail!(
-            "MPS_PERMISSIONS must not grant the service-only {AUTOMATED_REVIEW} scope"
+            "MPS_PERMISSIONS must not grant service-only review or worker scopes"
         );
     }
     let automated_review_bearer_token = required_env("MPS_AUTOMATED_REVIEW_TOKEN")?;
@@ -56,20 +58,35 @@ async fn main() -> Result<()> {
     {
         anyhow::bail!("MPS_MCP_SERVICE_TOKEN must differ from human and review service tokens");
     }
+    let visual_worker_bearer_token = required_nonempty_env("MPS_VISUAL_WORKER_TOKEN")?;
+    if visual_worker_bearer_token == teacher_bearer_token
+        || visual_worker_bearer_token == automated_review_bearer_token
+        || visual_worker_bearer_token == mcp_service_bearer_token
+    {
+        anyhow::bail!("MPS_VISUAL_WORKER_TOKEN must differ from other service tokens");
+    }
+    let studio_id = required_env("MPS_STUDIO_ID")?;
     let auth = StaticTokenAuth {
         teacher_bearer_token,
         teacher_context: AuthContext::new(
-            required_env("MPS_STUDIO_ID")?,
+            studio_id.clone(),
             required_env("MPS_TEACHER_ID")?,
             teacher_permissions,
         ),
         automated_review_bearer_token,
         automated_review_context: AuthContext::new(
-            required_env("MPS_STUDIO_ID")?,
+            studio_id.clone(),
             required_env("MPS_AUTOMATED_REVIEW_SERVICE_ID")?,
             [AUTOMATED_REVIEW],
         ),
         mcp_service_bearer_token,
+        visual_worker_bearer_token,
+        visual_worker_context: AuthContext::new(
+            studio_id,
+            required_nonempty_env("MPS_VISUAL_WORKER_SERVICE_ID")?,
+            [VISUAL_WORKER],
+        )
+        .with_actor_kind(AuditActorKind::System),
     };
     let state = tokio::task::spawn_blocking(move || AppState::load(&config))
         .await
@@ -111,6 +128,9 @@ async fn authenticate(
                 None => return unauthorized(),
             }
         }
+        Some(token) if token == auth.visual_worker_bearer_token.as_str() => {
+            auth.visual_worker_context
+        }
         _ => return unauthorized(),
     };
     request.extensions_mut().insert(context);
@@ -137,4 +157,12 @@ fn unauthorized() -> Response {
 
 fn required_env(name: &str) -> Result<String> {
     env::var(name).with_context(|| format!("{name} must be configured server-side"))
+}
+
+fn required_nonempty_env(name: &str) -> Result<String> {
+    let value = required_env(name)?;
+    if value.trim().is_empty() {
+        anyhow::bail!("{name} must not be empty");
+    }
+    Ok(value)
 }

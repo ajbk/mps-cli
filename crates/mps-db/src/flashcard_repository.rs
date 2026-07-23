@@ -134,6 +134,190 @@ mod tests {
     }
 
     #[test]
+    fn worker_completion_atomically_persists_asset_review_and_legal_status() {
+        let repository = repository();
+        repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-1"))
+            .unwrap();
+        let mut worker_brief = brief("card-1");
+        worker_brief.outfit = LOCKED_OUTFIT.into();
+        repository
+            .save_visual_brief_for_studio("studio-a", "teacher-01", &worker_brief)
+            .unwrap();
+        repository
+            .create_job_for_studio(
+                "studio-a",
+                "teacher-01",
+                &FlashcardJob {
+                    id: "job-1".into(),
+                    card_id: "card-1".into(),
+                    kind: FlashcardJobKind::Generate,
+                    status: FlashcardJobStatus::Queued,
+                    input_json: json!({"brief_id": "brief-1"}),
+                    output_json: None,
+                    error: None,
+                },
+            )
+            .unwrap();
+
+        let completed = repository
+            .complete_job_for_worker(
+                "studio-a",
+                "visual-worker",
+                "card-1",
+                "job-1",
+                &FlashcardWorkerCompletion {
+                    status: FlashcardJobStatus::Succeeded,
+                    asset: Some(FlashcardAsset {
+                        id: "asset-1".into(),
+                        card_id: "card-1".into(),
+                        brief_id: "brief-1".into(),
+                        repo_path: "object://mps-flashcards/card-1-v1.png".into(),
+                        provider_job_id: Some("provider-1".into()),
+                        version: 1,
+                        status: FlashcardAssetStatus::NeedsReview,
+                    }),
+                    review: Some(FlashcardReview {
+                        id: "review-1".into(),
+                        card_id: "card-1".into(),
+                        asset_id: "asset-1".into(),
+                        passed: true,
+                        findings_json: json!([]),
+                        reviewer_kind: ReviewerKind::Automated,
+                        reviewer_id: None,
+                    }),
+                    error_code: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(completed.status, FlashcardJobStatus::Succeeded);
+        assert_eq!(repository.asset_version("asset-1").unwrap(), Some(1));
+        assert_eq!(
+            repository.get_flashcard("card-1").unwrap().unwrap().status,
+            FlashcardStatus::NeedsReview
+        );
+
+        repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-2"))
+            .unwrap();
+        let mut second_brief = brief("card-2");
+        second_brief.id = "brief-2".into();
+        second_brief.outfit = LOCKED_OUTFIT.into();
+        repository
+            .save_visual_brief_for_studio("studio-a", "teacher-01", &second_brief)
+            .unwrap();
+        repository
+            .create_job_for_studio(
+                "studio-a",
+                "teacher-01",
+                &FlashcardJob {
+                    id: "job-2".into(),
+                    card_id: "card-2".into(),
+                    kind: FlashcardJobKind::Generate,
+                    status: FlashcardJobStatus::Queued,
+                    input_json: json!({"brief_id": "brief-2"}),
+                    output_json: None,
+                    error: None,
+                },
+            )
+            .unwrap();
+        repository
+            .complete_job_for_worker(
+                "studio-a",
+                "visual-worker",
+                "card-2",
+                "job-2",
+                &FlashcardWorkerCompletion {
+                    status: FlashcardJobStatus::Failed,
+                    asset: None,
+                    review: None,
+                    error_code: Some("visual_contract_invalid".into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            repository.get_flashcard("card-2").unwrap().unwrap().status,
+            FlashcardStatus::RevisionRequested
+        );
+        assert_eq!(
+            repository
+                .get_job_for_studio("studio-a", "card-2", "job-2")
+                .unwrap()
+                .unwrap()
+                .status,
+            FlashcardJobStatus::Failed
+        );
+
+        repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-3"))
+            .unwrap();
+        let mut third_brief = brief("card-3");
+        third_brief.id = "brief-3".into();
+        third_brief.outfit = LOCKED_OUTFIT.into();
+        repository
+            .save_visual_brief_for_studio("studio-a", "teacher-01", &third_brief)
+            .unwrap();
+        repository
+            .create_job_for_studio(
+                "studio-a",
+                "teacher-01",
+                &FlashcardJob {
+                    id: "job-3".into(),
+                    card_id: "card-3".into(),
+                    kind: FlashcardJobKind::Generate,
+                    status: FlashcardJobStatus::Queued,
+                    input_json: json!({"brief_id": "brief-3"}),
+                    output_json: None,
+                    error: None,
+                },
+            )
+            .unwrap();
+        repository
+            .complete_job_for_worker(
+                "studio-a",
+                "visual-worker",
+                "card-3",
+                "job-3",
+                &FlashcardWorkerCompletion {
+                    status: FlashcardJobStatus::Succeeded,
+                    asset: Some(FlashcardAsset {
+                        id: "asset-3".into(),
+                        card_id: "card-3".into(),
+                        brief_id: "brief-3".into(),
+                        repo_path: "object://mps-flashcards/card-3-v1.png".into(),
+                        provider_job_id: None,
+                        version: 1,
+                        status: FlashcardAssetStatus::Rejected,
+                    }),
+                    review: Some(FlashcardReview {
+                        id: "review-3".into(),
+                        card_id: "card-3".into(),
+                        asset_id: "asset-3".into(),
+                        passed: false,
+                        findings_json: json!([{"code": "visual_check_failed", "severity": "error"}]),
+                        reviewer_kind: ReviewerKind::Automated,
+                        reviewer_id: None,
+                    }),
+                    error_code: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            repository.get_flashcard("card-3").unwrap().unwrap().status,
+            FlashcardStatus::RevisionRequested
+        );
+        assert_eq!(
+            repository
+                .get_job_for_studio("studio-a", "card-3", "job-3")
+                .unwrap()
+                .unwrap()
+                .status,
+            FlashcardJobStatus::Succeeded
+        );
+    }
+
+    #[test]
     fn rejects_publish_until_an_approved_card_has_a_passing_latest_review() {
         let repository = repository();
         repository.create_flashcard(&card("card-1")).unwrap();
@@ -439,6 +623,14 @@ pub struct FlashcardReview {
     pub findings_json: Value,
     pub reviewer_kind: ReviewerKind,
     pub reviewer_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FlashcardWorkerCompletion {
+    pub status: FlashcardJobStatus,
+    pub asset: Option<FlashcardAsset>,
+    pub review: Option<FlashcardReview>,
+    pub error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1046,6 +1238,245 @@ impl FlashcardRepository {
         })
     }
 
+    pub fn complete_job_for_worker(
+        &self,
+        studio_id: &str,
+        worker_id: &str,
+        card_id: &str,
+        job_id: &str,
+        completion: &FlashcardWorkerCompletion,
+    ) -> Result<FlashcardJob> {
+        require_identity("studio", studio_id)?;
+        require_identity("worker", worker_id)?;
+        require_identifier("card", card_id)?;
+        require_identifier("job", job_id)?;
+        let studio_id = studio_id.to_owned();
+        let worker_id = worker_id.to_owned();
+        let card_id = card_id.to_owned();
+        let job_id = job_id.to_owned();
+        let completion = completion.clone();
+        self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
+            assert_card_studio_in_transaction(&mut transaction, &studio_id, &card_id).await?;
+            let mut job = get_job_in_transaction(&mut transaction, &job_id)
+                .await?
+                .ok_or_else(|| anyhow!("flashcard job not found: {job_id}"))?;
+            if job.card_id != card_id {
+                return Err(anyhow!("flashcard job does not belong to the card"));
+            }
+            if matches!(job.status, FlashcardJobStatus::Succeeded | FlashcardJobStatus::Failed) {
+                transaction.commit().await?;
+                return Ok(job);
+            }
+            if !matches!(job.kind, FlashcardJobKind::Generate | FlashcardJobKind::Regenerate) {
+                return Err(anyhow!("worker callbacks only complete generation jobs"));
+            }
+            let card = get_flashcard_in_transaction(&mut transaction, &card_id)
+                .await?
+                .ok_or_else(|| anyhow!("flashcard not found: {card_id}"))?;
+            if card.status != FlashcardStatus::Generating {
+                return Err(anyhow!("worker callback requires a generating flashcard"));
+            }
+
+            let brief_id = job
+                .input_json
+                .get("brief_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("generation job is missing its visual brief ID"))?;
+            let brief_row: Option<(String, String)> = sqlx::query_as(
+                "SELECT card_id, brief_json FROM visual_briefs WHERE id = ?",
+            )
+            .bind(brief_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+            let (brief_card_id, brief_json) =
+                brief_row.ok_or_else(|| anyhow!("visual brief not found: {brief_id}"))?;
+            if brief_card_id != card_id {
+                return Err(anyhow!("visual brief does not belong to the flashcard job"));
+            }
+            let brief: VisualBrief = serde_json::from_str(&brief_json)
+                .context("parse worker visual brief")?;
+            require_worker_visual_brief(&brief, &card)?;
+
+            match completion.status {
+                FlashcardJobStatus::Succeeded => {
+                    let asset = completion
+                        .asset
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("successful worker callback requires an asset"))?;
+                    let review = completion
+                        .review
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("successful worker callback requires a review"))?;
+                    validate_worker_completion(&card_id, brief_id, asset, review)?;
+                    if asset.status
+                        != if review.passed {
+                            FlashcardAssetStatus::NeedsReview
+                        } else {
+                            FlashcardAssetStatus::Rejected
+                        }
+                    {
+                        return Err(anyhow!("worker asset status does not match review result"));
+                    }
+                    sqlx::query("INSERT INTO flashcard_assets (id, card_id, brief_id, repo_path, provider_job_id, version, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                        .bind(&asset.id)
+                        .bind(&card_id)
+                        .bind(&asset.brief_id)
+                        .bind(&asset.repo_path)
+                        .bind(&asset.provider_job_id)
+                        .bind(asset.version)
+                        .bind(asset_status_to_db(&asset.status))
+                        .bind(timestamp())
+                        .execute(&mut *transaction)
+                        .await?;
+                    sqlx::query("UPDATE flashcard_cards SET current_asset_id = ?, updated_at = ? WHERE id = ?")
+                        .bind(&asset.id)
+                        .bind(timestamp())
+                        .bind(&card_id)
+                        .execute(&mut *transaction)
+                        .await?;
+                    sqlx::query("INSERT INTO flashcard_reviews (id, card_id, asset_id, passed, findings_json, reviewer_kind, reviewer_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                        .bind(&review.id)
+                        .bind(&card_id)
+                        .bind(&asset.id)
+                        .bind(review.passed)
+                        .bind(serde_json::to_string(&review.findings_json)? )
+                        .bind(reviewer_kind_to_db(&ReviewerKind::Automated))
+                        .bind(None::<String>)
+                        .bind(timestamp())
+                        .execute(&mut *transaction)
+                        .await?;
+                    record_audit_in_transaction(
+                        &mut transaction,
+                        &card_id,
+                        AuditActorKind::System,
+                        Some(&worker_id),
+                        "flashcard_asset.recorded",
+                        json!({
+                            "studio_id": studio_id,
+                            "worker_id": worker_id,
+                            "job_id": job.id,
+                            "asset_id": asset.id,
+                            "asset_version": asset.version,
+                            "status": asset_status_to_db(&asset.status),
+                        }),
+                    )
+                    .await?;
+                    record_audit_in_transaction(
+                        &mut transaction,
+                        &card_id,
+                        AuditActorKind::System,
+                        Some(&worker_id),
+                        "flashcard_review.recorded",
+                        json!({
+                            "studio_id": studio_id,
+                            "worker_id": worker_id,
+                            "job_id": job.id,
+                            "review_id": review.id,
+                            "asset_id": asset.id,
+                            "passed": review.passed,
+                        }),
+                    )
+                    .await?;
+                    transition_worker_card_status(
+                        &mut transaction,
+                        &card,
+                        FlashcardStatus::NeedsReview,
+                        &worker_id,
+                        &studio_id,
+                        &job.id,
+                    )
+                    .await?;
+                    if !review.passed {
+                        let needs_review = get_flashcard_in_transaction(&mut transaction, &card_id)
+                            .await?
+                            .ok_or_else(|| anyhow!("flashcard not found after review transition"))?;
+                        transition_worker_card_status(
+                            &mut transaction,
+                            &needs_review,
+                            FlashcardStatus::RevisionRequested,
+                            &worker_id,
+                            &studio_id,
+                            &job.id,
+                        )
+                        .await?;
+                    }
+                    job.output_json = Some(json!({
+                        "asset_id": asset.id,
+                        "asset_version": asset.version,
+                        "review_id": review.id,
+                        "passed": review.passed,
+                    }));
+                    job.error = None;
+                    job.status = FlashcardJobStatus::Succeeded;
+                }
+                FlashcardJobStatus::Failed => {
+                    if completion.asset.is_some() || completion.review.is_some() {
+                        return Err(anyhow!("failed worker callback cannot include an asset or review"));
+                    }
+                    let error_code = completion
+                        .error_code
+                        .as_deref()
+                        .filter(|value| is_safe_worker_code(value))
+                        .unwrap_or("visual_worker_failed")
+                        .to_owned();
+                    transition_worker_card_status(
+                        &mut transaction,
+                        &card,
+                        FlashcardStatus::NeedsReview,
+                        &worker_id,
+                        &studio_id,
+                        &job.id,
+                    )
+                    .await?;
+                    let needs_review = get_flashcard_in_transaction(&mut transaction, &card_id)
+                        .await?
+                        .ok_or_else(|| anyhow!("flashcard not found after failure transition"))?;
+                    transition_worker_card_status(
+                        &mut transaction,
+                        &needs_review,
+                        FlashcardStatus::RevisionRequested,
+                        &worker_id,
+                        &studio_id,
+                        &job.id,
+                    )
+                    .await?;
+                    job.output_json = Some(json!({ "status": "failed" }));
+                    job.error = Some(error_code);
+                    job.status = FlashcardJobStatus::Failed;
+                }
+                FlashcardJobStatus::Queued | FlashcardJobStatus::Running => {
+                    return Err(anyhow!("worker callback must be terminal"));
+                }
+            }
+            sqlx::query("UPDATE flashcard_jobs SET status = ?, output_json = ?, error = ?, updated_at = ? WHERE id = ? AND card_id = ?")
+                .bind(job_status_to_db(&job.status))
+                .bind(job.output_json.as_ref().map(serde_json::to_string).transpose()? )
+                .bind(&job.error)
+                .bind(timestamp())
+                .bind(&job.id)
+                .bind(&card_id)
+                .execute(&mut *transaction)
+                .await?;
+            record_audit_in_transaction(
+                &mut transaction,
+                &card_id,
+                AuditActorKind::System,
+                Some(&worker_id),
+                "flashcard_job.completed",
+                json!({
+                    "studio_id": studio_id,
+                    "worker_id": worker_id,
+                    "job_id": job.id,
+                    "status": job_status_to_db(&job.status),
+                }),
+            )
+            .await?;
+            transaction.commit().await?;
+            Ok(job)
+        })
+    }
+
     pub fn latest_brief_version_for_studio(
         &self,
         studio_id: &str,
@@ -1508,6 +1939,21 @@ async fn get_flashcard_in_transaction(
         .transpose()
 }
 
+async fn get_job_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    id: &str,
+) -> Result<Option<FlashcardJob>> {
+    sqlx::query_as::<_, JobRow>(
+        "SELECT id, card_id, kind, status, input_json, output_json, error
+         FROM flashcard_jobs WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&mut **transaction)
+    .await?
+    .map(job_from_row)
+    .transpose()
+}
+
 async fn assert_card_studio_in_transaction(
     transaction: &mut Transaction<'_, Sqlite>,
     studio_id: &str,
@@ -1664,6 +2110,135 @@ fn require_identity(label: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() {
         return Err(anyhow!("{label} identity must not be empty"));
     }
+    Ok(())
+}
+
+fn require_identifier(label: &str, value: &str) -> Result<()> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+    {
+        return Err(anyhow!("{label} identifier is invalid"));
+    }
+    Ok(())
+}
+
+fn is_safe_worker_code(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn is_safe_worker_asset_path(value: &str) -> bool {
+    if value.is_empty()
+        || value.contains('\\')
+        || value.chars().any(|character| character.is_control())
+        || value.starts_with('/')
+        || value.starts_with('~')
+        || value.starts_with("file:")
+        || value.starts_with("http:")
+        || value.starts_with("https:")
+        || value.starts_with("data:")
+    {
+        return false;
+    }
+    if let Some(key) = value.strip_prefix("object://mps-flashcards/") {
+        return !key.is_empty()
+            && !key.split('/').any(|part| part.is_empty() || part == "." || part == "..");
+    }
+    if value.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+        return false;
+    }
+    value.starts_with("web/assets/flashcard-images/")
+        || value.starts_with("docs/assets/flashcard-images/")
+}
+
+fn require_worker_visual_brief(brief: &VisualBrief, card: &FlashcardCard) -> Result<()> {
+    let cheek_accent = brief
+        .palette_json
+        .get("cheekAccent")
+        .and_then(Value::as_str);
+    if brief.card_id != card.id
+        || brief.exercise_id != card.source_exercise_id
+        || brief.style_profile != LOCKED_STYLE_PROFILE
+        || brief.character_id != LOCKED_CHARACTER_ID
+        || brief.outfit != LOCKED_OUTFIT
+        || cheek_accent != Some(DUSTY_ROSE_CHEEK_ACCENT)
+    {
+        return Err(anyhow!("worker visual brief does not match the locked contract"));
+    }
+    Ok(())
+}
+
+fn validate_worker_completion(
+    card_id: &str,
+    brief_id: &str,
+    asset: &FlashcardAsset,
+    review: &FlashcardReview,
+) -> Result<()> {
+    require_identifier("asset", &asset.id)?;
+    require_identifier("brief", &asset.brief_id)?;
+    require_identifier("review", &review.id)?;
+    if asset.card_id != card_id
+        || asset.brief_id != brief_id
+        || review.card_id != card_id
+        || review.asset_id != asset.id
+        || review.reviewer_kind != ReviewerKind::Automated
+        || review.reviewer_id.is_some()
+    {
+        return Err(anyhow!("worker completion ownership or reviewer contract is invalid"));
+    }
+    if asset.version < 1 || !is_safe_worker_asset_path(&asset.repo_path) {
+        return Err(anyhow!("worker asset path or version is invalid"));
+    }
+    if asset
+        .provider_job_id
+        .as_deref()
+        .is_some_and(|value| !is_safe_worker_code(value))
+    {
+        return Err(anyhow!("worker provider job ID is invalid"));
+    }
+    Ok(())
+}
+
+async fn transition_worker_card_status(
+    transaction: &mut Transaction<'_, Sqlite>,
+    card: &FlashcardCard,
+    next: FlashcardStatus,
+    worker_id: &str,
+    studio_id: &str,
+    job_id: &str,
+) -> Result<()> {
+    if !can_transition(card.status, next) {
+        return Err(anyhow!("invalid worker flashcard status transition"));
+    }
+    sqlx::query("UPDATE flashcard_cards SET status = ?, updated_at = ? WHERE id = ?")
+        .bind(status_to_db(next))
+        .bind(timestamp())
+        .bind(&card.id)
+        .execute(&mut **transaction)
+        .await?;
+    record_audit_in_transaction(
+        transaction,
+        &card.id,
+        AuditActorKind::System,
+        Some(worker_id),
+        "flashcard.status_transitioned",
+        json!({
+            "studio_id": studio_id,
+            "worker_id": worker_id,
+            "job_id": job_id,
+            "from": status_to_db(card.status),
+            "to": status_to_db(next),
+        }),
+    )
+    .await?;
     Ok(())
 }
 

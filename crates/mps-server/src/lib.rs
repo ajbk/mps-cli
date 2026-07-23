@@ -11,8 +11,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{async_trait, Json, Router};
 use mps_db::{
-    AuditActorKind, FlashcardJob, FlashcardJobKind, FlashcardJobStatus, FlashcardListFilter, FlashcardPatch,
-    FlashcardRepository, FlashcardReview, ReviewerKind,
+    AuditActorKind, FlashcardAsset, FlashcardAssetStatus, FlashcardJob, FlashcardJobKind,
+    FlashcardJobStatus, FlashcardListFilter, FlashcardPatch, FlashcardRepository,
+    FlashcardReview, FlashcardWorkerCompletion, ReviewerKind,
 };
 use mps_flashcards::{
     CanonicalCatalog, CatalogExercise, FlashcardCard, FlashcardStatus, VisualBrief,
@@ -35,6 +36,7 @@ pub const WRITE_DRAFT: &str = "write_draft";
 pub const GENERATE_ASSET: &str = "generate_asset";
 pub const SUBMIT_REVIEW: &str = "submit_review";
 pub const AUTOMATED_REVIEW: &str = "automated_review";
+pub const VISUAL_WORKER: &str = "visual_worker";
 pub const PUBLISH: &str = "publish";
 
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -209,6 +211,10 @@ pub fn app(state: AppState) -> Router {
             "/api/flashcards/:id/jobs/:job_id",
             get(get_flashcard_job),
         )
+        .route(
+            "/api/internal/flashcards/:id/jobs/:job_id/complete",
+            post(complete_visual_job),
+        )
         .route("/api/flashcards/:id/reviews", post(create_review))
         .route(
             "/api/flashcards/:id/submit-review",
@@ -360,6 +366,150 @@ struct CreateReviewRequest {
     asset_id: String,
     passed: bool,
     findings_json: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum WorkerCompletionStatus {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerAssetRequest {
+    id: String,
+    brief_id: String,
+    repo_path: String,
+    provider_job_id: Option<String>,
+    version: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerReviewRequest {
+    id: String,
+    asset_id: String,
+    passed: bool,
+    findings_json: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerCompletionRequest {
+    status: WorkerCompletionStatus,
+    asset: Option<WorkerAssetRequest>,
+    review: Option<WorkerReviewRequest>,
+    error_code: Option<String>,
+}
+
+impl WorkerCompletionRequest {
+    fn into_completion(self, card_id: &str) -> Result<FlashcardWorkerCompletion, ApiError> {
+        let completion = match self.status {
+            WorkerCompletionStatus::Succeeded => {
+                let asset = self
+                    .asset
+                    .ok_or_else(|| ApiError::bad_request("successful worker completion requires an asset"))?;
+                let review = self
+                    .review
+                    .ok_or_else(|| ApiError::bad_request("successful worker completion requires a review"))?;
+                if review.asset_id != asset.id {
+                    return Err(ApiError::bad_request("worker review payload is invalid"));
+                }
+                let findings_json = sanitize_worker_findings(&review.findings_json)?;
+                FlashcardWorkerCompletion {
+                    status: FlashcardJobStatus::Succeeded,
+                    asset: Some(FlashcardAsset {
+                        id: asset.id,
+                        card_id: card_id.to_owned(),
+                        brief_id: asset.brief_id,
+                        repo_path: asset.repo_path,
+                        provider_job_id: asset.provider_job_id,
+                        version: asset.version,
+                        status: if review.passed {
+                            FlashcardAssetStatus::NeedsReview
+                        } else {
+                            FlashcardAssetStatus::Rejected
+                        },
+                    }),
+                    review: Some(FlashcardReview {
+                        id: review.id,
+                        card_id: card_id.to_owned(),
+                        asset_id: review.asset_id,
+                        passed: review.passed,
+                        findings_json,
+                        reviewer_kind: ReviewerKind::Automated,
+                        reviewer_id: None,
+                    }),
+                    error_code: None,
+                }
+            }
+            WorkerCompletionStatus::Failed => {
+                if self.asset.is_some() || self.review.is_some() {
+                    return Err(ApiError::bad_request("failed worker completion cannot include an asset or review"));
+                }
+                FlashcardWorkerCompletion {
+                    status: FlashcardJobStatus::Failed,
+                    asset: None,
+                    review: None,
+                    error_code: Some(sanitize_worker_error_code(self.error_code.as_deref())),
+                }
+            }
+        };
+        Ok(completion)
+    }
+}
+
+fn sanitize_worker_error_code(value: Option<&str>) -> String {
+    match value {
+        Some("visual_contract_invalid") => "visual_contract_invalid".to_owned(),
+        Some("vision_review_failed") => "vision_review_failed".to_owned(),
+        Some("image_generation_failed") => "image_generation_failed".to_owned(),
+        _ => "visual_worker_failed".to_owned(),
+    }
+}
+
+fn sanitize_worker_findings(value: &Value) -> Result<Value, ApiError> {
+    let findings = value
+        .as_array()
+        .ok_or_else(|| ApiError::bad_request("worker review payload is invalid"))?;
+    if findings.len() > 128 {
+        return Err(ApiError::bad_request("worker review payload is invalid"));
+    }
+    let sanitized = findings
+        .iter()
+        .map(|finding| {
+            let code = match finding.get("code").and_then(Value::as_str) {
+                Some(code)
+                    if matches!(
+                        code,
+                        "unsafe_asset_path"
+                            | "unsupported_image_type"
+                            | "invalid_asset_metadata"
+                            | "worker_cannot_approve"
+                            | "vision_reviewer_unavailable"
+                            | "visual_check_failed"
+                            | "vision_review_failed"
+                            | "vision_finding"
+                    ) => code,
+                _ => "visual_finding",
+            };
+            let severity = if finding.get("severity").and_then(Value::as_str) == Some("warning") {
+                "warning"
+            } else {
+                "error"
+            };
+            json!({"code": code, "severity": severity})
+        })
+        .collect::<Vec<_>>();
+    let sanitized = Value::Array(sanitized);
+    if serde_json::to_vec(&sanitized)
+        .map(|bytes| bytes.len() > 64 * 1024)
+        .unwrap_or(true)
+    {
+        return Err(ApiError::bad_request("worker review payload is invalid"));
+    }
+    Ok(sanitized)
 }
 
 #[derive(Debug, Serialize)]
@@ -678,6 +828,32 @@ async fn get_flashcard_job(
     .await?
     .ok_or_else(|| ApiError::not_found("flashcard job not found"))?;
     Ok(Json(job_response(job)))
+}
+
+async fn complete_visual_job(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((card_id, job_id)): Path<(String, String)>,
+    Json(request): Json<WorkerCompletionRequest>,
+) -> Result<Json<JobResponse>, ApiError> {
+    auth.require(VISUAL_WORKER)?;
+    if auth.actor_kind != AuditActorKind::System {
+        return Err(ApiError::forbidden("visual worker service identity is required"));
+    }
+    let completion = request.into_completion(&card_id)?;
+    let studio_id = auth.studio_id;
+    let worker_id = auth.teacher_id;
+    let completed = run_repository(state.repository.clone(), move |repository| {
+        repository.complete_job_for_worker(
+            &studio_id,
+            &worker_id,
+            &card_id,
+            &job_id,
+            &completion,
+        )
+    })
+    .await?;
+    Ok(Json(job_response(completed)))
 }
 
 async fn create_review(
@@ -1362,6 +1538,11 @@ mod routes {
         AuthContext::new(studio_id, "automated-review-service", [AUTOMATED_REVIEW])
     }
 
+    fn visual_worker(studio_id: &str) -> AuthContext {
+        AuthContext::new(studio_id, "visual-worker", [VISUAL_WORKER])
+            .with_actor_kind(AuditActorKind::System)
+    }
+
     fn card(id: &str) -> FlashcardCard {
         FlashcardCard {
             id: id.to_owned(),
@@ -1676,6 +1857,123 @@ mod routes {
         );
 
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn visual_worker_callback_is_service_only_and_persists_atomically() {
+        let fixture = test_app();
+        fixture
+            .repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-a"))
+            .unwrap();
+        fixture
+            .repository
+            .save_visual_brief_for_studio(
+                "studio-a",
+                "teacher-01",
+                &VisualBrief {
+                    id: "brief-a".into(),
+                    card_id: "card-a".into(),
+                    exercise_id: "source_chair_achilles_stretch_row_4".into(),
+                    style_profile: LOCKED_STYLE_PROFILE.into(),
+                    character_id: LOCKED_CHARACTER_ID.into(),
+                    outfit: LOCKED_OUTFIT.into(),
+                    pose_json: json!({"landmarks": [], "contact_points": []}),
+                    apparatus: "Chair".into(),
+                    palette_json: json!({"cheekAccent": DUSTY_ROSE_CHEEK_ACCENT}),
+                    must_show_json: json!([]),
+                    must_not_show_json: json!(["arrows", "text", "logos", "watermark"]),
+                    version: 1,
+                },
+            )
+            .unwrap();
+        fixture
+            .repository
+            .create_job_for_studio(
+                "studio-a",
+                "teacher-01",
+                &FlashcardJob {
+                    id: "job-a".into(),
+                    card_id: "card-a".into(),
+                    kind: FlashcardJobKind::Generate,
+                    status: FlashcardJobStatus::Queued,
+                    input_json: json!({"brief_id": "brief-a"}),
+                    output_json: None,
+                    error: None,
+                },
+            )
+            .unwrap();
+
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/complete",
+                auth("studio-a"),
+                Some(json!({
+                    "status": "succeeded",
+                    "asset": {
+                        "id": "asset-a",
+                        "brief_id": "brief-a",
+                        "repo_path": "object://mps-flashcards/card-a-v1.png",
+                        "provider_job_id": "provider-a",
+                        "version": 1
+                    },
+                    "review": {
+                        "id": "review-a",
+                        "asset_id": "asset-a",
+                        "passed": true,
+                        "findings_json": []
+                    }
+                })),
+        );
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/complete",
+                AuthContext::new("studio-a", "not-a-worker", [VISUAL_WORKER]),
+                Some(json!({"status": "failed"})),
+            ),
+        );
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let (status, body) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/complete",
+                visual_worker("studio-a"),
+                Some(json!({
+                    "status": "succeeded",
+                    "asset": {
+                        "id": "asset-a",
+                        "brief_id": "brief-a",
+                        "repo_path": "object://mps-flashcards/card-a-v1.png",
+                        "provider_job_id": "provider-a",
+                        "version": 1
+                    },
+                    "review": {
+                        "id": "review-a",
+                        "asset_id": "asset-a",
+                        "passed": true,
+                        "findings_json": []
+                    }
+                })),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "succeeded");
+        assert_eq!(
+            fixture
+                .repository
+                .get_flashcard_for_studio("studio-a", "card-a")
+                .unwrap()
+                .unwrap()
+                .status,
+            FlashcardStatus::NeedsReview
+        );
     }
 
     #[test]

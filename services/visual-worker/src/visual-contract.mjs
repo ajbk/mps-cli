@@ -43,6 +43,8 @@ export const DEFAULT_ASSET_POLICY = Object.freeze({
   objectStorePrefixes: Object.freeze(['object://mps-flashcards/']),
 });
 
+const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
 const FORBIDDEN_PATH_PATTERNS = [
   /^\//,
   /^\\/,
@@ -59,6 +61,22 @@ export class VisualContractError extends Error {
     this.name = 'VisualContractError';
     this.errors = errors;
   }
+}
+
+export function isSafeIdentifier(value) {
+  return typeof value === 'string'
+    && value !== '.'
+    && value !== '..'
+    && SAFE_IDENTIFIER_PATTERN.test(value);
+}
+
+export function assertSafeIdentifier(value, field = 'identifier') {
+  if (!isSafeIdentifier(value)) {
+    throw new VisualContractError('visual worker identifiers are invalid', [
+      { code: 'invalid_identifier', field },
+    ]);
+  }
+  return value;
 }
 
 function isRecord(value) {
@@ -97,7 +115,7 @@ export function assertSafeAssetPath(value, policy = DEFAULT_ASSET_POLICY) {
   if (!isSafeAssetPath(value, policy)) {
     throw new VisualContractError(
       'asset path must be an approved repo-relative path or object-store key',
-      [{ code: 'unsafe_asset_path', field: 'asset.path', value }],
+      [{ code: 'unsafe_asset_path', field: 'asset.path' }],
     );
   }
   return value;
@@ -200,23 +218,46 @@ export function validateVisualManifest(manifest) {
 }
 
 export function validateReferenceAssets(referenceAssets, policy = DEFAULT_ASSET_POLICY) {
-  if (referenceAssets === undefined) return [];
-  if (!Array.isArray(referenceAssets)) {
+  if (!isRecord(referenceAssets)) {
     return [{ code: 'invalid_reference_assets', field: 'referenceAssets' }];
   }
   const errors = [];
-  for (const [index, reference] of referenceAssets.entries()) {
+  const canonicalSheet = referenceAssets.canonicalSheet;
+  if (!isRecord(canonicalSheet)) {
+    errors.push({ code: 'canonical_sheet_required', field: 'referenceAssets.canonicalSheet' });
+  } else {
+    const path = canonicalSheet.path ?? canonicalSheet.assetPath ?? canonicalSheet.key;
+    if (!isSafeIdentifier(canonicalSheet.id)) {
+      errors.push({ code: 'invalid_canonical_sheet', field: 'referenceAssets.canonicalSheet.id' });
+    }
+    if (!Number.isInteger(canonicalSheet.version) || canonicalSheet.version < 1) {
+      errors.push({ code: 'invalid_canonical_sheet', field: 'referenceAssets.canonicalSheet.version' });
+    }
+    if (!isSafeAssetPath(path, policy)) {
+      errors.push({ code: 'unsafe_canonical_sheet_path', field: 'referenceAssets.canonicalSheet.path' });
+    }
+  }
+  if (!Array.isArray(referenceAssets.references)) {
+    errors.push({ code: 'reference_pack_required', field: 'referenceAssets.references' });
+    return errors;
+  }
+  const roles = new Set();
+  for (const [index, reference] of referenceAssets.references.entries()) {
     if (!isRecord(reference)) {
       errors.push({ code: 'invalid_reference_asset', field: `referenceAssets[${index}]` });
       continue;
     }
     const path = reference.path ?? reference.assetPath ?? reference.key;
-    if (typeof reference.id !== 'string' || typeof reference.role !== 'string') {
+    if (!isSafeIdentifier(reference.id) || typeof reference.role !== 'string' || reference.role.length === 0) {
       errors.push({ code: 'invalid_reference_asset', field: `referenceAssets[${index}]` });
     }
+    roles.add(reference.role);
     if (!isSafeAssetPath(path, policy)) {
-      errors.push({ code: 'unsafe_reference_asset_path', field: `referenceAssets[${index}].path`, value: path });
+      errors.push({ code: 'unsafe_reference_asset_path', field: `referenceAssets[${index}].path` });
     }
+  }
+  for (const role of REQUIRED_REFERENCE_ROLES) {
+    if (!roles.has(role)) errors.push({ code: 'reference_role_missing', field: `referenceAssets.references.${role}` });
   }
   return errors;
 }
@@ -273,6 +314,12 @@ export function assertValidVisualBrief({ brief, exerciseContext, manifest }) {
   return true;
 }
 
+function stringConstraints(value) {
+  if (typeof value === 'string' && value.trim() !== '') return [value.trim()];
+  if (Array.isArray(value)) return value.flatMap(stringConstraints);
+  return [];
+}
+
 export function compileGenerationPayload({ brief, exerciseContext, manifest, referenceAssets }) {
   assertValidVisualBrief({ brief, exerciseContext, manifest });
   const referenceErrors = validateReferenceAssets(referenceAssets);
@@ -281,21 +328,16 @@ export function compileGenerationPayload({ brief, exerciseContext, manifest, ref
   }
 
   const exercise = canonicalExercise(exerciseContext);
-  const references = referenceAssets === undefined
-    ? referenceRolesFromManifest(manifest)
-    : referenceAssets.map((reference) => ({
+  const references = referenceAssets.references.map((reference) => ({
       id: reference.id,
       role: reference.role,
       path: reference.path ?? reference.assetPath ?? reference.key,
     }));
-  const missingRoles = REQUIRED_REFERENCE_ROLES.filter(
-    (role) => !references.some((reference) => reference.role === role),
-  );
-  if (missingRoles.length > 0) {
-    throw new VisualContractError(
-      'reference assets are missing required character roles',
-      missingRoles.map((role) => ({ code: 'reference_role_missing', field: 'referenceAssets', value: role })),
-    );
+  const canonicalSheet = referenceAssets.canonicalSheet;
+  if (canonicalSheet.version !== manifest.character.version) {
+    throw new VisualContractError('canonical character sheet version is not current', [
+      { code: 'canonical_sheet_version_mismatch', field: 'referenceAssets.canonicalSheet.version' },
+    ]);
   }
   const pose = brief.pose_json;
   const mustShow = Array.isArray(brief.must_show_json)
@@ -309,6 +351,11 @@ export function compileGenerationPayload({ brief, exerciseContext, manifest, ref
     character: {
       id: CHARACTER_ID,
       referenceVersion: manifest.character.version,
+      canonicalSheet: {
+        id: canonicalSheet.id,
+        version: canonicalSheet.version,
+        path: canonicalSheet.path ?? canonicalSheet.assetPath ?? canonicalSheet.key,
+      },
       referenceRoles: references,
       outfit: LOCKED_OUTFIT,
       cheekAccent: CHEEK_ACCENT,
@@ -332,7 +379,10 @@ export function compileGenerationPayload({ brief, exerciseContext, manifest, ref
       cheekAccent: CHEEK_ACCENT,
     },
     mustShow,
-    negativeConstraints: [...REQUIRED_NEGATIVE_CONSTRAINTS],
+    negativeConstraints: [...new Set([
+      ...REQUIRED_NEGATIVE_CONSTRAINTS,
+      ...stringConstraints(brief.must_not_show_json),
+    ])],
     output: {
       background: 'clean white paper',
       noTextLayer: true,
