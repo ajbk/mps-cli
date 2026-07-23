@@ -332,6 +332,7 @@ pub fn app(state: AppState) -> Router {
                 .delete(clear_browser_session),
         )
         .route("/api/flashcards", get(list_flashcards).post(create_flashcard))
+        .route("/api/catalog/exercises", get(search_catalog_exercises))
         .route(
             "/api/catalog/exercises/:exercise_id/context",
             get(get_exercise_context),
@@ -542,6 +543,24 @@ struct ListFlashcardsQuery {
     status: Option<FlashcardStatus>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct CatalogSearchQuery {
+    query: Option<String>,
+    apparatus: Option<String>,
+    level: Option<String>,
+    body_region: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CatalogSearchResponse {
+    id: String,
+    name: String,
+    apparatus: String,
+    equipment_key: String,
+    level: Option<String>,
+    body_regions: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct FlashcardResponse {
     id: String,
@@ -664,7 +683,6 @@ struct VisualBriefResponse {
 #[serde(rename_all = "kebab-case")]
 enum CreateJobKind {
     Generate,
-    Review,
     Regenerate,
 }
 
@@ -930,6 +948,57 @@ async fn list_flashcards(
     Ok(Json(responses))
 }
 
+async fn search_catalog_exercises(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Query(query): Query<CatalogSearchQuery>,
+) -> Result<Json<Vec<CatalogSearchResponse>>, ApiError> {
+    auth.require(READ_CATALOG)?;
+    let query_text = query.query.unwrap_or_default().trim().to_lowercase();
+    let apparatus = query.apparatus.unwrap_or_default().trim().to_lowercase();
+    let level = query.level.unwrap_or_default().trim().to_lowercase();
+    let body_region = query.body_region.unwrap_or_default().trim().to_lowercase();
+    let responses = state
+        .catalog
+        .exercises
+        .iter()
+        .filter(|exercise| {
+            let searchable = format!(
+                "{} {} {} {} {}",
+                exercise.id,
+                exercise.exercise,
+                exercise.apparatus,
+                exercise.equipment_key,
+                exercise.body_regions.join(" ")
+            )
+            .to_lowercase();
+            let matches_query = query_text.is_empty() || searchable.contains(&query_text);
+            let matches_apparatus = apparatus.is_empty()
+                || exercise.apparatus.to_lowercase() == apparatus
+                || exercise.equipment_key.to_lowercase() == apparatus;
+            let matches_level = level.is_empty()
+                || level == "all"
+                || exercise_level(exercise)
+                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&level));
+            let matches_body_region = body_region.is_empty()
+                || exercise
+                    .body_regions
+                    .iter()
+                    .any(|region| region.to_lowercase().contains(&body_region));
+            matches_query && matches_apparatus && matches_level && matches_body_region
+        })
+        .map(|exercise| CatalogSearchResponse {
+            id: exercise.id.clone(),
+            name: exercise.exercise.clone(),
+            apparatus: exercise.apparatus.clone(),
+            equipment_key: exercise.equipment_key.clone(),
+            level: exercise_level(exercise),
+            body_regions: exercise.body_regions.clone(),
+        })
+        .collect();
+    Ok(Json(responses))
+}
+
 async fn get_exercise_context(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -1142,15 +1211,9 @@ async fn create_job(
     let card = get_scoped_card(&state, &auth, &id).await?;
     let kind = match request.kind {
         CreateJobKind::Generate => FlashcardJobKind::Generate,
-        CreateJobKind::Review => FlashcardJobKind::Review,
         CreateJobKind::Regenerate => FlashcardJobKind::Regenerate,
     };
-    match &kind {
-        FlashcardJobKind::Review => auth.require(SUBMIT_REVIEW)?,
-        FlashcardJobKind::Generate | FlashcardJobKind::Regenerate => {
-            auth.require(GENERATE_ASSET)?
-        }
-    }
+    auth.require(GENERATE_ASSET)?;
     if matches!(
         &kind,
         FlashcardJobKind::Generate | FlashcardJobKind::Regenerate
@@ -1304,6 +1367,9 @@ async fn create_review(
     Json(request): Json<CreateReviewRequest>,
 ) -> Result<(StatusCode, Json<MutationResponse>), ApiError> {
     auth.require(AUTOMATED_REVIEW)?;
+    if auth.actor_kind != AuditActorKind::System {
+        return Err(ApiError::forbidden("automated review service identity is required"));
+    }
     let card = get_scoped_card(&state, &auth, &id).await?;
     let review = FlashcardReview {
         id: request.id.unwrap_or_else(|| next_id("review")),
@@ -2173,6 +2239,7 @@ mod routes {
 
     fn automated_reviewer(studio_id: &str) -> AuthContext {
         AuthContext::new(studio_id, "automated-review-service", [AUTOMATED_REVIEW])
+            .with_actor_kind(AuditActorKind::System)
     }
 
     fn visual_worker(studio_id: &str) -> AuthContext {
@@ -2569,6 +2636,26 @@ mod routes {
         assert_eq!(context["families"][0]["name"], "Footwork");
         assert!(context["exercise"].get("source_pages").is_none());
         assert!(!serde_json::to_string(&context).unwrap().contains("Teaser"));
+    }
+
+    #[test]
+    fn catalog_search_reads_canonical_exercises_without_flashcard_drafts() {
+        let fixture = test_app();
+
+        let (status, body) = send(
+            &fixture.app,
+            request(
+                Method::GET,
+                "/api/catalog/exercises?query=achilles&apparatus=chair&body_region=ankle",
+                auth("fresh-studio"),
+                None,
+            ),
+        );
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_array().unwrap().len(), 1);
+        assert_eq!(body[0]["id"], "source_chair_achilles_stretch_row_4");
+        assert!(body[0].get("teaching_copy_json").is_none());
     }
 
     #[test]

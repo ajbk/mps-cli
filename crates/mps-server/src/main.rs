@@ -84,7 +84,8 @@ async fn main() -> Result<()> {
             studio_id.clone(),
             required_env("MPS_AUTOMATED_REVIEW_SERVICE_ID")?,
             [AUTOMATED_REVIEW],
-        ),
+        )
+        .with_actor_kind(AuditActorKind::System),
         mcp_service_bearer_token,
         visual_worker_bearer_token,
         visual_worker_context: AuthContext::new(

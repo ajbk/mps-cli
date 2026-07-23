@@ -14,7 +14,7 @@ export function createMpsClient({ baseUrl, serviceToken, identity, fetchImpl = f
     return sanitize(body);
   }
   return {
-    searchExercises: (query, apparatus, level) => request(`/api/flashcards?${new URLSearchParams({ query, ...(apparatus && { apparatus }), ...(level && { level }) })}`),
+    searchExercises: (query, apparatus, level, bodyRegion) => request(`/api/catalog/exercises?${new URLSearchParams({ query, ...(apparatus && { apparatus }), ...(level && { level }), ...(bodyRegion && { body_region: bodyRegion }) })}`),
     getExerciseContext: (exerciseId) => request(`/api/catalog/exercises/${encodeURIComponent(assertSafeIdentifier(exerciseId, "exercise_id"))}/context`), getVisualContract: () => request("/api/visual-contract"),
     createDraft: (body) => request("/api/flashcards", { method: "POST", body: JSON.stringify(body) }), createVisualBrief: (cardId, body) => request(`/api/flashcards/${encodeURIComponent(assertSafeIdentifier(cardId, "card_id"))}/visual-briefs`, { method: "POST", body: JSON.stringify(body) }), createJob: (cardId, body) => request(`/api/flashcards/${encodeURIComponent(assertSafeIdentifier(cardId, "card_id"))}/jobs`, { method: "POST", body: JSON.stringify(body) }), updateDraft: (cardId, body) => request(`/api/flashcards/${encodeURIComponent(assertSafeIdentifier(cardId, "card_id"))}`, { method: "PATCH", body: JSON.stringify(body) }), submitForReview: (cardId) => request(`/api/flashcards/${encodeURIComponent(assertSafeIdentifier(cardId, "card_id"))}/submit-review`, { method: "POST" })
   };

@@ -13,7 +13,7 @@ function adapter(scopes = ["read_catalog", "write_draft", "generate_asset", "sub
   return { calls, handle: createMcpHandler({
     verifyBearerToken: async (token) => token === "valid" ? { studioId: "studio-01", teacherId: "teacher-01", scopes } : null,
     client: {
-      searchExercises: async (query) => [{ id: "card-1", name: "Pelvic Clock", query }],
+      searchExercises: async (query, apparatus, level, bodyRegion) => [{ id: "source-1", name: "Pelvic Clock", query, apparatus, level, bodyRegion }],
       getExerciseContext: async (id) => id === exercise.exercise.id ? exercise : null,
       getVisualContract: async () => ({ styleProfile: "mono-gesture-ink-pilates-v1", characterId: "teacher-01", outfit: "locked", cheekAccent: "#D98F9A", negativeConstraints: ["text"], reviewChecklist: ["identity"] }),
       createDraft: async (body) => { calls.push(["createDraft", body]); return { id: "card-1", ...body, status: "draft" }; },
@@ -40,7 +40,7 @@ async function post(port, body, headers = {}) {
 }
 
 test("tools/list returns MCP tool definitions with object input schemas", async () => {
-  const result = await adapter().handle({ method: "tools/list" });
+  const result = await adapter().handle({ method: "tools/list" }, { authorization: "Bearer valid" });
   assert.ok(Array.isArray(result.result.tools));
   for (const tool of result.result.tools) assert.deepEqual(tool.inputSchema.type, "object");
 });
@@ -48,7 +48,7 @@ test("tools/list returns MCP tool definitions with object input schemas", async 
 test("tools/call returns a CallToolResult with structured content", async () => {
   const result = await call(adapter(["read_catalog"]), "search_exercises", { query: "pelvic" });
   assert.equal(result.result.isError, false);
-  assert.deepEqual(result.result.structuredContent, [{ id: "card-1", name: "Pelvic Clock", query: "pelvic" }]);
+  assert.deepEqual(result.result.structuredContent, [{ id: "source-1", name: "Pelvic Clock", query: "pelvic" }]);
   assert.equal(result.result.content[0].type, "text");
 });
 
@@ -70,12 +70,12 @@ test("write tools do not require read_catalog and preserve locked visual contrac
   assert.equal(locked.result.isError, true);
 });
 
-test("generation rejects absolute paths and review cannot publish", async () => {
-  const instance = adapter(["generate_asset", "submit_review"]);
+test("generation rejects absolute paths and review jobs are not exposed", async () => {
+  const instance = adapter(["generate_asset"]);
   const invalid = await call(instance, "generate_flashcard_image", { card_id: "card-1", brief_id: "/tmp/brief.json" });
   assert.equal(invalid.result.isError, true);
   const review = await call(instance, "review_flashcard_image", { card_id: "card-1", asset_id: "asset-1" });
-  assert.equal(review.result.structuredContent.kind, "review");
+  assert.equal(review.error.code, -32601);
 });
 
 test("introspection requires active issuer audience expiry identity and supported scopes", async () => {
@@ -94,6 +94,14 @@ test("MPS client uses a server-only service token and verified identity headers"
   assert.equal(request.headers["x-mps-studio-id"], "studio-01");
   assert.equal(request.headers["x-mps-teacher-id"], "teacher-01");
   assert.equal(request.headers["x-mps-actor-kind"], "chatgpt");
+});
+
+test("catalog searches use the canonical API route and all filters", async () => {
+  let url;
+  const client = createMpsClient({ baseUrl: "https://api.test", serviceToken: "service-token", identity: { studioId: "studio-01", teacherId: "teacher-01" }, fetchImpl: async (request) => { url = request; return new Response("[]", { status: 200 }); } });
+  await client.searchExercises("pelvic", "Mat", "Beginner", "Pelvis");
+  assert.equal(url.pathname, "/api/catalog/exercises");
+  assert.equal(url.searchParams.get("body_region"), "Pelvis");
 });
 
 test("missing bearer receives a protected-resource Bearer challenge", async () => {
@@ -120,19 +128,30 @@ test("insufficient tool scope returns a reauthorization challenge", async () => 
   });
 });
 
-test("notifications return 202 without a body and batches return only responses", async () => {
+test("authenticated notifications return 202 without a body and batches return only responses", async () => {
   const env = { MPS_API_BASE_URL: "https://api.test", MPS_API_SERVICE_TOKEN: "service-token", MPS_OAUTH_INTROSPECTION_URL: "https://issuer.test/introspect", MPS_OAUTH_CLIENT_ID: "id", MPS_OAUTH_CLIENT_SECRET: "secret", MPS_OAUTH_ISSUER: "https://issuer.test", MPS_RESOURCE_URL: "https://mcp.test/mcp" };
-  await withServer(env, async () => new Response("{}", { status: 401 }), async (port) => {
-    const notification = await post(port, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+  const claims = { active: true, iss: env.MPS_OAUTH_ISSUER, aud: env.MPS_RESOURCE_URL, exp: Math.floor(Date.now() / 1000) + 60, studio_id: "studio-01", teacher_id: "teacher-01", scope: "read_catalog" };
+  await withServer(env, async () => new Response(JSON.stringify(claims)), async (port) => {
+    const notification = await post(port, { jsonrpc: "2.0", method: "notifications/initialized", params: {} }, { authorization: "Bearer valid" });
     assert.equal(notification.status, 202);
     assert.equal(await notification.text(), "");
-    const batch = await post(port, [{ jsonrpc: "2.0", id: 1, method: "tools/list" }, { jsonrpc: "2.0", method: "notifications/initialized", params: {} }]);
+    const batch = await post(port, [{ jsonrpc: "2.0", id: 1, method: "tools/list" }, { jsonrpc: "2.0", method: "notifications/initialized", params: {} }], { authorization: "Bearer valid" });
     assert.equal(batch.status, 200);
     const responses = await batch.json();
     assert.equal(responses.length, 1);
     assert.equal(responses[0].id, 1);
     const empty = await post(port, []);
     assert.equal(empty.status, 400);
+  });
+});
+
+test("initialize and tools/list reject unauthenticated dispatch", async () => {
+  const env = { MPS_API_BASE_URL: "https://api.test", MPS_API_SERVICE_TOKEN: "service-token", MPS_OAUTH_INTROSPECTION_URL: "https://issuer.test/introspect", MPS_OAUTH_CLIENT_ID: "id", MPS_OAUTH_CLIENT_SECRET: "secret", MPS_OAUTH_ISSUER: "https://issuer.test", MPS_RESOURCE_URL: "https://mcp.test/mcp" };
+  await withServer(env, async () => new Response("{}", { status: 401 }), async (port) => {
+    for (const method of ["initialize", "tools/list"]) {
+      const response = await post(port, { jsonrpc: "2.0", id: 1, method, params: {} });
+      assert.equal(response.status, 401);
+    }
   });
 });
 

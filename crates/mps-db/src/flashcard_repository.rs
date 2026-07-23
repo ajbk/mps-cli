@@ -106,6 +106,48 @@ mod tests {
     }
 
     #[test]
+    fn automated_review_audit_uses_the_system_service_actor() {
+        let repository = repository();
+        repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-1"))
+            .unwrap();
+        repository
+            .save_visual_brief_for_studio("studio-a", "teacher-01", &brief("card-1"))
+            .unwrap();
+        repository
+            .record_asset(&FlashcardAsset {
+                id: "asset-1".into(),
+                card_id: "card-1".into(),
+                brief_id: "brief-1".into(),
+                repo_path: "docs/assets/asset-1.png".into(),
+                provider_job_id: Some("provider-job-1".into()),
+                version: 1,
+                status: FlashcardAssetStatus::NeedsReview,
+            })
+            .unwrap();
+        repository
+            .record_automated_review_for_studio(
+                "studio-a",
+                "automated-review-service",
+                &FlashcardReview {
+                    id: "review-1".into(),
+                    card_id: "card-1".into(),
+                    asset_id: "asset-1".into(),
+                    passed: true,
+                    findings_json: json!([]),
+                    reviewer_kind: ReviewerKind::Automated,
+                    reviewer_id: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            audit_actor_for_action(&repository, "card-1", "flashcard_review.recorded"),
+            Some(("system".into(), Some("automated-review-service".into())))
+        );
+    }
+
+    #[test]
     fn records_jobs_and_explicit_audit_events() {
         let repository = repository();
         repository.create_flashcard(&card("card-1")).unwrap();
@@ -2169,7 +2211,7 @@ impl FlashcardRepository {
             record_audit_in_transaction(
                 &mut transaction,
                 &review.card_id,
-                AuditActorKind::Teacher,
+                AuditActorKind::System,
                 Some(&teacher_id),
                 "flashcard_review.recorded",
                 json!({

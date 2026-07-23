@@ -45,7 +45,7 @@ authorization with PKCE.
 | `read_catalog` | `search_exercises`, `get_exercise_context`, `get_visual_contract` |
 | `write_draft` | `create_flashcard_draft`, `build_visual_brief`, `save_flashcard_draft` |
 | `generate_asset` | `generate_flashcard_image` |
-| `submit_review` | `review_flashcard_image`, `submit_for_review` |
+| `submit_review` | `submit_for_review` |
 
 Token claims must contain active status, `studio_id`, `teacher_id`, and at least
 one supported scope, exact issuer, matching resource audience, and an unexpired
@@ -68,6 +68,12 @@ database-path, and private-reference fields before being returned to ChatGPT.
 Runtime validation matches each published tool schema and rejects unknown,
 identity, publication-status, and unlocked-outfit fields instead of dropping
 them silently.
+
+`search_exercises` reads the canonical workbook-derived catalog through
+`/api/catalog/exercises`; it is independent of flashcard drafts, so a newly
+created studio can discover canonical exercises before it has persisted cards.
+The adapter does not expose a review-job tool: review jobs are not worker
+claimable, and automated review is recorded by the trusted server workflow.
 
 There is intentionally no publish or approval tool. ChatGPT cannot approve or
 publish a flashcard. Teacher review and the server/PWA publication workflow are
