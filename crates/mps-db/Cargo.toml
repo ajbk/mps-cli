@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 mps-core = { path = "../mps-core" }
+mps-flashcards = { path = "../mps-flashcards" }
 anyhow.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

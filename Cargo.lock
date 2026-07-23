@@ -809,6 +809,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mps-core",
+ "mps-flashcards",
+ "serde_json",
  "sqlx",
  "tokio",
 ]
