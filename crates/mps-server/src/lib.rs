@@ -34,6 +34,7 @@ pub const READ_CATALOG: &str = "read_catalog";
 pub const WRITE_DRAFT: &str = "write_draft";
 pub const GENERATE_ASSET: &str = "generate_asset";
 pub const SUBMIT_REVIEW: &str = "submit_review";
+pub const AUTOMATED_REVIEW: &str = "automated_review";
 pub const PUBLISH: &str = "publish";
 
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -46,11 +47,15 @@ pub struct AuthContext {
 }
 
 impl AuthContext {
-    pub fn new(
+    pub fn new<I, P>(
         studio_id: impl Into<String>,
         teacher_id: impl Into<String>,
-        permissions: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+        permissions: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<String>,
+    {
         Self {
             studio_id: studio_id.into(),
             teacher_id: teacher_id.into(),
@@ -670,7 +675,7 @@ async fn create_review(
     Path(id): Path<String>,
     Json(request): Json<CreateReviewRequest>,
 ) -> Result<(StatusCode, Json<MutationResponse>), ApiError> {
-    auth.require(SUBMIT_REVIEW)?;
+    auth.require(AUTOMATED_REVIEW)?;
     let card = get_scoped_card(&state, &auth, &id).await?;
     let review = FlashcardReview {
         id: request.id.unwrap_or_else(|| next_id("review")),
@@ -941,11 +946,14 @@ fn validate_catalog_provenance(json_source: &str) -> anyhow::Result<()> {
     let source_path = document
         .pointer("/source/path")
         .and_then(Value::as_str);
-    if source_file != Some(CANONICAL_WORKBOOK_FILE)
-        || source_path != Some(CANONICAL_WORKBOOK_PATH)
-    {
+    if source_file != Some(CANONICAL_WORKBOOK_FILE) {
         return Err(anyhow!(
-            "catalog JSON must be derived from {CANONICAL_WORKBOOK_PATH}"
+            "catalog JSON must declare source.file as {CANONICAL_WORKBOOK_FILE}"
+        ));
+    }
+    if source_path.is_some_and(|path| path != CANONICAL_WORKBOOK_PATH) {
+        return Err(anyhow!(
+            "catalog JSON source.path must be {CANONICAL_WORKBOOK_PATH} when present"
         ));
     }
     Ok(())
@@ -1337,6 +1345,10 @@ mod routes {
         )
     }
 
+    fn automated_reviewer(studio_id: &str) -> AuthContext {
+        AuthContext::new(studio_id, "automated-review-service", [AUTOMATED_REVIEW])
+    }
+
     fn card(id: &str) -> FlashcardCard {
         FlashcardCard {
             id: id.to_owned(),
@@ -1629,6 +1641,31 @@ mod routes {
     }
 
     #[test]
+    fn automated_review_requires_the_trusted_service_scope() {
+        let fixture = test_app();
+        fixture
+            .repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-a"))
+            .unwrap();
+
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/flashcards/card-a/reviews",
+                auth("studio-a"),
+                Some(json!({
+                    "asset_id": "asset-a",
+                    "passed": true,
+                    "findings_json": []
+                })),
+            ),
+        );
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
     fn every_mutation_route_adds_an_audit_row() {
         let fixture = test_app();
 
@@ -1757,7 +1794,7 @@ mod routes {
             request(
                 Method::POST,
                 "/api/flashcards/card-a/reviews",
-                auth("studio-a"),
+                automated_reviewer("studio-a"),
                 Some(json!({
                     "id": "automated-review-a",
                     "asset_id": "asset-a",
@@ -1850,6 +1887,11 @@ mod routes {
     #[test]
     fn catalog_provenance_requires_the_canonical_workbook() {
         validate_catalog_provenance(CATALOG_JSON).unwrap();
+        let missing_optional_path = CATALOG_JSON.replace(
+            ",\n        \"path\": \"data/reference/MPS_Database_v1_Core.xlsx\"",
+            "",
+        );
+        validate_catalog_provenance(&missing_optional_path).unwrap();
         let wrong_source = CATALOG_JSON.replace(
             "MPS_Database_v1_Core.xlsx",
             "AI_Generated_Exercises.xlsx",
