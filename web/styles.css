@@ -908,6 +908,10 @@ td {
     line-height: 1.45;
 }
 
+.flashcard-print-details {
+    display: none;
+}
+
 .flashcard-library-footer {
     display: flex;
     align-items: center;
@@ -1058,6 +1062,9 @@ td {
     .studio-sidebar,
     .actions,
     .view-tabs,
+    .flashcard-library-sidebar,
+    .flashcard-results-head,
+    .create-flashcard,
     .no-print {
         display: none !important;
     }
@@ -1073,6 +1080,47 @@ td {
     .studio-main {
         max-width: none;
         padding: 0;
+    }
+
+    .flashcard-library {
+        display: block;
+    }
+
+    .flashcard-deck {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .flashcard-library-objective {
+        display: none;
+    }
+
+    .flashcard-print-details {
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        padding: 12px;
+        border-top: 1px solid var(--line);
+    }
+
+    .flashcard-print-details div {
+        display: grid;
+        grid-template-columns: 76px minmax(0, 1fr);
+        gap: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #ecdccb;
+        font-size: 13px;
+        line-height: 1.42;
+    }
+
+    .flashcard-print-details div:last-child {
+        padding-bottom: 0;
+        border-bottom: 0;
+    }
+
+    .flashcard-print-details b {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
     }
 
     .card,

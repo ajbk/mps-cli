@@ -831,7 +831,15 @@ function renderFlashcard(card) {
     const slug = card.category.toLowerCase();
     const artClass = card.image ? 'flashcard-art has-image' : 'flashcard-art';
     const artStyle = card.image ? ` style="background-image: url('${safeAssetUrl(card.image)}')"` : '';
-    const status = window.MPS_FLASHCARD_MODEL.statusLabel(card.status || 'published');
+    const status = card.status ? window.MPS_FLASHCARD_MODEL.statusLabel(card.status) : 'Catalog';
+    const printRows = [
+        ['Front', card.front],
+        ['Objective', card.objective],
+        ['Principle', card.principle],
+        ['Cue', card.cue],
+        ['Regress', card.regress],
+        ['Progress', card.progress]
+    ];
 
     return `
         <article class="studio-flashcard flashcard-library-card flashcard-${slug}">
@@ -844,6 +852,14 @@ function renderFlashcard(card) {
                 <span class="flashcard-level">${escapeHtml(card.level)}</span>
             </header>
             <p class="flashcard-library-objective">${escapeHtml(card.objective || card.front)}</p>
+            <section class="flashcard-print-details" aria-label="Teaching details">
+                ${printRows.map(([label, value]) => `
+                    <div>
+                        <b>${escapeHtml(label)}</b>
+                        <span>${escapeHtml(value || '-')}</span>
+                    </div>
+                `).join('')}
+            </section>
             <footer class="flashcard-library-footer">
                 <span class="flashcard-status">${escapeHtml(status)}</span>
                 <button class="secondary create-flashcard" type="button" data-create-flashcard="${escapeHtml(card.id)}">Create card</button>
