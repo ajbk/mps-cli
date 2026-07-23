@@ -176,6 +176,27 @@ mod tests {
     }
 
     #[test]
+    fn rejects_review_jobs_before_they_can_be_queued() {
+        let repository = repository();
+        repository.create_flashcard(&card("card-1")).unwrap();
+
+        assert!(repository
+            .create_job(&FlashcardJob {
+                id: "review-job-1".into(),
+                card_id: "card-1".into(),
+                kind: FlashcardJobKind::Review,
+                status: FlashcardJobStatus::Queued,
+                input_json: json!({}),
+                output_json: None,
+                error: None,
+            })
+            .expect_err("review jobs have no supported worker lifecycle")
+            .to_string()
+            .contains("review jobs are not supported"));
+        assert_eq!(repository.audit_event_count("card-1").unwrap(), 1);
+    }
+
+    #[test]
     fn worker_completion_atomically_persists_asset_review_and_legal_status() {
         let repository = repository();
         repository
@@ -1584,6 +1605,7 @@ impl FlashcardRepository {
     }
 
     pub fn create_job(&self, job: &FlashcardJob) -> Result<()> {
+        reject_unsupported_job_kind(job)?;
         self.runtime.block_on(async {
             let mut transaction = self.pool.begin().await?;
             let now = timestamp();
@@ -1613,6 +1635,7 @@ impl FlashcardRepository {
         actor_kind: AuditActorKind,
         job: &FlashcardJob,
     ) -> Result<()> {
+        reject_unsupported_job_kind(job)?;
         require_identity("studio", studio_id)?;
         require_identity("teacher", teacher_id)?;
         let studio_id = studio_id.to_owned();
@@ -3008,6 +3031,12 @@ fn status_to_db(status: FlashcardStatus) -> &'static str { match status { Flashc
 fn status_from_db(status: &str) -> Result<FlashcardStatus> { match status { "draft" => Ok(FlashcardStatus::Draft), "generating" => Ok(FlashcardStatus::Generating), "needs-review" => Ok(FlashcardStatus::NeedsReview), "revision-requested" => Ok(FlashcardStatus::RevisionRequested), "approved" => Ok(FlashcardStatus::Approved), "published" => Ok(FlashcardStatus::Published), _ => Err(anyhow!("unknown flashcard status: {status}")) } }
 fn asset_status_to_db(status: &FlashcardAssetStatus) -> &'static str { match status { FlashcardAssetStatus::Generating => "generating", FlashcardAssetStatus::NeedsReview => "needs-review", FlashcardAssetStatus::Rejected => "rejected", FlashcardAssetStatus::Approved => "approved" } }
 fn job_kind_to_db(kind: &FlashcardJobKind) -> &'static str { match kind { FlashcardJobKind::Generate => "generate", FlashcardJobKind::Review => "review", FlashcardJobKind::Regenerate => "regenerate" } }
+fn reject_unsupported_job_kind(job: &FlashcardJob) -> Result<()> {
+    if matches!(job.kind, FlashcardJobKind::Review) {
+        return Err(anyhow!("review jobs are not supported; submit automated reviews through the trusted review endpoint"));
+    }
+    Ok(())
+}
 fn job_status_to_db(status: &FlashcardJobStatus) -> &'static str { match status { FlashcardJobStatus::Queued => "queued", FlashcardJobStatus::Running => "running", FlashcardJobStatus::Succeeded => "succeeded", FlashcardJobStatus::Failed => "failed" } }
 fn reviewer_kind_to_db(kind: &ReviewerKind) -> &'static str { match kind { ReviewerKind::Automated => "automated", ReviewerKind::Teacher => "teacher" } }
 fn actor_kind_to_db(kind: &AuditActorKind) -> &'static str { match kind { AuditActorKind::Teacher => "teacher", AuditActorKind::Chatgpt => "chatgpt", AuditActorKind::System => "system" } }
