@@ -13,7 +13,6 @@ window.MPS_FLASHCARDS = [
     "regress": "lighter spring or smaller range",
     "progress": "add tempo changes or single-leg preparation",
     "search": "r01 reformer footwork: parallel heels footwork: parallel heels - what is the teaching purpose? beginner align feet, knees, hips, and pelvis under spring load lower-body training with trunk integration press through the whole heel without locking the knees lighter spring or smaller range add tempo changes or single-leg preparation",
-    "image": "assets/flashcard-images/reformer/r01-footwork-parallel-heels.png"
   },
   {
     "id": "R02",
@@ -27,7 +26,6 @@ window.MPS_FLASHCARDS = [
     "regress": "reduce range",
     "progress": "add calf articulation at end range",
     "search": "r02 reformer footwork: parallel toes footwork: parallel toes - what should the instructor watch? beginner ankle organization and even leg drive precision through foot-to-pelvis connection keep heels lifted and inner ankles steady reduce range add calf articulation at end range",
-    "image": "assets/flashcard-images/reformer/r02-footwork-parallel-toes.png"
   },
   {
     "id": "R03",
@@ -41,7 +39,6 @@ window.MPS_FLASHCARDS = [
     "regress": "smaller V",
     "progress": "lower springs or add pulses",
     "search": "r03 reformer footwork: pilates v footwork: pilates v - why choose it? beginner connect turnout to hip rotation without gripping whole-body movement from center to limbs wrap the upper inner thighs while keeping the pelvis heavy smaller v lower springs or add pulses",
-    "image": "assets/flashcard-images/reformer/r03-footwork-pilates-v.png"
   },
   {
     "id": "R04",
@@ -55,7 +52,6 @@ window.MPS_FLASHCARDS = [
     "regress": "narrow the stance",
     "progress": "add arm reach or slower eccentric return",
     "search": "r04 reformer footwork: wide second footwork: wide second - what does it train? beginner hip abduction control and knee tracking lower-body alignment knees follow second toes on the press and return narrow the stance add arm reach or slower eccentric return",
-    "image": "assets/flashcard-images/reformer/r04-footwork-wide-second.png"
   },
   {
     "id": "R05",
@@ -69,7 +65,6 @@ window.MPS_FLASHCARDS = [
     "regress": "slow the rhythm",
     "progress": "maintain pelvis quiet with lighter springs",
     "search": "r05 reformer running running - when is it useful? beginner ankle mobility, calf rhythm, and post-footwork circulation flow and mobility one heel reaches under the bar as the other knee bends slow the rhythm maintain pelvis quiet with lighter springs",
-    "image": "assets/flashcard-images/reformer/r05-running.png"
   },
   {
     "id": "R06",
@@ -83,7 +78,6 @@ window.MPS_FLASHCARDS = [
     "regress": "bridge halfway",
     "progress": "add arm reach or single-leg prep",
     "search": "r06 reformer pelvic curl on reformer pelvic curl on reformer - what is the benchmark quality? beginner spinal articulation and posterior-chain support trunk integration roll the spine sequentially and keep the ribs weighted bridge halfway add arm reach or single-leg prep",
-    "image": "assets/flashcard-images/reformer/r06-pelvic-curl-on-reformer.png"
   },
   {
     "id": "R07",
@@ -539,7 +533,6 @@ window.MPS_FLASHCARDS = [
     "regress": "support knees",
     "progress": "add arm floats",
     "search": "m01 mat constructive rest breath constructive rest breath - why start here? beginner downshift tone and feel rib expansion breath and restoration inhale into side/back ribs, exhale without gripping support knees add arm floats",
-    "image": "assets/flashcard-images/mat/m01-constructive-rest-breath.png"
   },
   {
     "id": "M02",
@@ -553,7 +546,7 @@ window.MPS_FLASHCARDS = [
     "regress": "tiny range",
     "progress": "add breath rhythm",
     "search": "m02 mat pelvic clock pelvic clock - what does it assess? beginner pelvic awareness and lumbar mobility precision through small movement move the pelvis like a dial, not the legs tiny range add breath rhythm",
-    "image": "assets/flashcard-images/mat/m02-pelvic-clock.png"
+    "image": "assets/flashcard-images/mat/drafts/m02-pelvic-clock-teacher-01-mono-v2-pink-cheeks-draft.png"
   },
   {
     "id": "M03",
@@ -567,7 +560,6 @@ window.MPS_FLASHCARDS = [
     "regress": "heel slide",
     "progress": "alternating tabletop",
     "search": "m03 mat knee folds knee folds - what should stay stable? beginner hip flexion with quiet pelvis trunk integration fold at the hip crease while ribs stay heavy heel slide alternating tabletop",
-    "image": "assets/flashcard-images/mat/m03-knee-folds.png"
   },
   {
     "id": "M04",
@@ -581,7 +573,6 @@ window.MPS_FLASHCARDS = [
     "regress": "one foot down",
     "progress": "double toe taps",
     "search": "m04 mat toe taps toe taps - what is the challenge? beginner intermediate abdominal control under leg load center control tap from the hip without arching one foot down double toe taps",
-    "image": "assets/flashcard-images/mat/m04-toe-taps.png"
   },
   {
     "id": "M05",
@@ -595,7 +586,6 @@ window.MPS_FLASHCARDS = [
     "regress": "towel under head",
     "progress": "arms long",
     "search": "m05 mat ab prep ab prep - what is the teaching goal? beginner head-neck organization and upper abdominal support control and breath nod first, then curl the ribs towel under head arms long",
-    "image": "assets/flashcard-images/mat/m05-ab-prep.png"
   },
   {
     "id": "M06",
@@ -609,7 +599,6 @@ window.MPS_FLASHCARDS = [
     "regress": "feet down",
     "progress": "tabletop legs",
     "search": "m06 mat hundred prep hundred prep - what should improve? beginner breath stamina and trunk endurance breath plus flow pump arms from shoulders while breath stays steady feet down tabletop legs",
-    "image": "assets/flashcard-images/mat/m06-hundred-prep.png"
   },
   {
     "id": "M07",
@@ -1065,7 +1054,6 @@ window.MPS_FLASHCARDS = [
     "regress": "wall support",
     "progress": "eyes closed scan",
     "search": "s01 stand standing posture scan standing posture scan - what should be observed? beginner baseline alignment, weight shift, breath, and tension strategy whole-body assessment notice feet, pelvis, ribs, head, and breath without forcing correction wall support eyes closed scan",
-    "image": "assets/flashcard-images/stand/s01-standing-posture-scan.png"
   },
   {
     "id": "S02",
@@ -1079,7 +1067,6 @@ window.MPS_FLASHCARDS = [
     "regress": "hands on ribs",
     "progress": "add arm raise",
     "search": "s02 stand standing three-dimensional breath standing three-dimensional breath - why use it? beginner rib mobility and nervous-system settling breath and restoration inhale wide into side/back ribs hands on ribs add arm raise",
-    "image": "assets/flashcard-images/stand/s02-standing-three-dimensional-breath.png"
   },
   {
     "id": "S03",
@@ -1093,7 +1080,6 @@ window.MPS_FLASHCARDS = [
     "regress": "bend knees",
     "progress": "slower return",
     "search": "s03 stand standing roll down standing roll down - what is the benchmark? beginner spinal articulation and posterior-chain response mobility with precision nod head and roll one segment at a time bend knees slower return",
-    "image": "assets/flashcard-images/stand/s03-standing-roll-down.png"
   },
   {
     "id": "S04",
@@ -1107,7 +1093,6 @@ window.MPS_FLASHCARDS = [
     "regress": "smaller range",
     "progress": "hover away from wall",
     "search": "s04 stand wall roll down wall roll down - why use the wall? beginner give feedback for spinal sequencing precision peel away from wall without pushing hips forward smaller range hover away from wall",
-    "image": "assets/flashcard-images/stand/s04-wall-roll-down.png"
   },
   {
     "id": "S05",
@@ -1121,7 +1106,6 @@ window.MPS_FLASHCARDS = [
     "regress": "one arm",
     "progress": "add light load",
     "search": "s05 stand arm raise check arm raise check - what does it reveal? beginner overhead reach, rib compensation, and shoulder hiking upper-body assessment reach arms while ribs stay quiet one arm add light load",
-    "image": "assets/flashcard-images/stand/s05-arm-raise-check.png"
   },
   {
     "id": "S06",
@@ -1135,7 +1119,6 @@ window.MPS_FLASHCARDS = [
     "regress": "smaller slide",
     "progress": "add lift-off",
     "search": "s06 stand wall slide wall slide - what is the target? beginner scapular upward rotation and rib control upper-body training slide arms up without arching low back smaller slide add lift-off",
-    "image": "assets/flashcard-images/stand/s06-wall-slide.png"
   },
   {
     "id": "S07",
@@ -1591,7 +1574,6 @@ window.MPS_FLASHCARDS = [
     "regress": "lighter spring",
     "progress": "single-leg prep",
     "search": "c01 chair chair footwork: parallel chair footwork: parallel - what is the goal? beginner knee tracking, foot pressure, and pelvic height lower-body training press pedal evenly and control the return lighter spring single-leg prep",
-    "image": "assets/flashcard-images/chair/c01-chair-footwork-parallel.png"
   },
   {
     "id": "C02",
@@ -1605,7 +1587,6 @@ window.MPS_FLASHCARDS = [
     "regress": "smaller turnout",
     "progress": "heel lowers",
     "search": "c02 chair chair footwork: pilates v chair footwork: pilates v - why use it? beginner hip rotation control with ankle organization precision wrap thighs without gripping toes smaller turnout heel lowers",
-    "image": "assets/flashcard-images/chair/c02-chair-footwork-pilates-v.png"
   },
   {
     "id": "C03",
@@ -1619,7 +1600,6 @@ window.MPS_FLASHCARDS = [
     "regress": "two legs",
     "progress": "slower eccentric return",
     "search": "c03 chair single-leg chair footwork single-leg chair footwork - what changes? beginner intermediate unilateral leg strength and pelvis control lower-body balance pelvis stays level as one pedal moves two legs slower eccentric return",
-    "image": "assets/flashcard-images/chair/c03-single-leg-chair-footwork.png"
   },
   {
     "id": "C04",
@@ -1633,7 +1613,6 @@ window.MPS_FLASHCARDS = [
     "regress": "slower tempo",
     "progress": "lighter spring",
     "search": "c04 chair chair running chair running - when is it useful? beginner intermediate ankle rhythm and lower-leg mobility flow alternate heels without bouncing pelvis slower tempo lighter spring",
-    "image": "assets/flashcard-images/chair/c04-chair-running.png"
   },
   {
     "id": "C05",
@@ -1647,7 +1626,6 @@ window.MPS_FLASHCARDS = [
     "regress": "two hands, light spring",
     "progress": "single arm",
     "search": "c05 chair seated push down seated push down - what does it train? beginner scapular control, breath, and trunk height upper-body training grow tall as pedal moves two hands, light spring single arm",
-    "image": "assets/flashcard-images/chair/c05-seated-push-down.png"
   },
   {
     "id": "C06",
@@ -1661,7 +1639,6 @@ window.MPS_FLASHCARDS = [
     "regress": "both hands",
     "progress": "split stance or contralateral reach",
     "search": "c06 chair standing push down standing push down - what is the watch point? beginner intermediate shoulder stability with standing posture upper-body plus balance press from shoulder blade, not wrist both hands split stance or contralateral reach",
-    "image": "assets/flashcard-images/chair/c06-standing-push-down.png"
   },
   {
     "id": "C07",

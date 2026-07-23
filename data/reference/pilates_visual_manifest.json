@@ -26,7 +26,7 @@
       "top": "fitted off-white cropped Pilates camisole with thin straps",
       "bottom": "dark charcoal high-waisted fitted Pilates biker shorts ending mid-thigh",
       "body": "use the v5 measurements and teacher reference pack as the authority for proportions; do not slim, lengthen, or stylize the body",
-      "rendering": "realistic, attractive, confident adult woman; tasteful professional Pilates reference; natural anatomy; taller-looking vertical silhouette"
+      "rendering": "realistic, attractive, confident adult woman; tasteful professional Pilates reference; natural anatomy; exact canonical proportions from the v5 teacher reference pack; no lengthening"
     },
     "references": [
       { "id": "face-front", "role": "face_identity", "source": "private://teacher-01/face-front", "required": true },
