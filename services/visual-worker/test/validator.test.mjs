@@ -106,7 +106,10 @@ function testPersistenceReporter(onRequest = () => {}) {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ status: String(url).endsWith('/claim') ? 'running' : payload.status }),
+        json: async () => ({
+          status: String(url).endsWith('/claim') ? 'running' : payload.status,
+          claim_id: 'claim-1',
+        }),
       };
     },
   });
@@ -436,7 +439,7 @@ test('callback persistence failures propagate as retryable errors', async () => 
 test('success callback plus fallback failure propagates as retryable persistence', async () => {
   const reporter = async () => { throw new Error('private transport detail'); };
   Object.defineProperty(reporter, 'durable', { value: true });
-  Object.defineProperty(reporter, 'claim', { value: async () => {} });
+  Object.defineProperty(reporter, 'claim', { value: async () => ({ status: 'running', claim_id: 'claim-1' }) });
   await assert.rejects(
     () => processVisualJob({
       job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
@@ -460,6 +463,69 @@ test('success callback plus fallback failure propagates as retryable persistence
     }),
     (error) => error.code === 'visual_worker_persistence_retryable' && error.retryable === true,
   );
+});
+
+test('lost success response retries the original terminal event instead of failing the job', async () => {
+  const terminalEvents = [];
+  const reporter = async (event) => {
+    terminalEvents.push(event);
+    if (terminalEvents.length === 1) throw new Error('response lost after commit');
+  };
+  Object.defineProperty(reporter, 'durable', { value: true });
+  Object.defineProperty(reporter, 'claim', {
+    value: async () => ({ status: 'running', claim_id: 'claim-1' }),
+  });
+  const result = await processVisualJob({
+    job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
+    brief: brief(),
+    exerciseContext,
+    manifest,
+    referenceAssets,
+    generator: createImageGenerator({
+      generate: async () => ({
+        asset: {
+          id: 'asset-1',
+          path: 'object://mps-flashcards/card-1.png',
+          mimeType: 'image/png',
+        },
+      }),
+    }),
+    visionReviewer: createVisionReviewer({
+      review: async () => ({ passed: true, checks: passingChecks(), findings: [] }),
+    }),
+    persistenceReporter: reporter,
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.deepEqual(terminalEvents.map((event) => event.status), ['succeeded', 'succeeded']);
+  assert.deepEqual(terminalEvents.map((event) => event.claimId), ['claim-1', 'claim-1']);
+});
+
+test('a full retry reconciles an already committed terminal claim before generation', async () => {
+  let generated = false;
+  const reporter = async () => { throw new Error('terminal callback should not run'); };
+  Object.defineProperty(reporter, 'durable', { value: true });
+  Object.defineProperty(reporter, 'claim', {
+    value: async () => ({ status: 'succeeded', claim_id: 'claim-1' }),
+  });
+  const result = await processVisualJob({
+    job: { id: 'job-1', cardId: 'card-1', briefId: 'brief-1' },
+    brief: brief(),
+    exerciseContext,
+    manifest,
+    referenceAssets,
+    generator: createImageGenerator({
+      generate: async () => {
+        generated = true;
+        return { asset: { id: 'asset-1', path: 'object://mps-flashcards/card-1.png', mimeType: 'image/png' } };
+      },
+    }),
+    persistenceReporter: reporter,
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.reconciled, true);
+  assert.equal(generated, false);
 });
 
 test('persistence reporter receives trusted ownership and terminal-only data', async () => {
@@ -506,11 +572,11 @@ test('HTTP persistence reporter sends only the server callback contract', async 
       return { ok: true, status: 200, json: async () => ({ status: 'failed' }) };
     },
   });
-  await reporter({ jobId: 'job-1', cardId: 'card-1', status: 'failed', error: { message: 'hidden' } });
+  await reporter({ jobId: 'job-1', cardId: 'card-1', claimId: 'claim-1', status: 'failed', error: { message: 'hidden' } });
 
   assert.equal(request.url, 'https://mps.internal/api/internal/flashcards/card-1/jobs/job-1/complete');
   assert.equal(request.options.headers.authorization, 'Bearer worker-secret');
-  assert.deepEqual(JSON.parse(request.options.body), { status: 'failed' });
+  assert.deepEqual(JSON.parse(request.options.body), { status: 'failed', claim_id: 'claim-1' });
 });
 
 test('HTTP persistence reporter verifies the terminal response status', async () => {
@@ -524,7 +590,7 @@ test('HTTP persistence reporter verifies the terminal response status', async ()
     }),
   });
   await assert.rejects(
-    () => reporter({ jobId: 'job-1', cardId: 'card-1', status: 'failed' }),
+    () => reporter({ jobId: 'job-1', cardId: 'card-1', claimId: 'claim-1', status: 'failed' }),
     (error) => error.code === 'visual_worker_persistence_retryable',
   );
 });
@@ -540,7 +606,7 @@ test('HTTP persistence reporter rejects a non-200 callback response', async () =
     }),
   });
   await assert.rejects(
-    () => reporter({ jobId: 'job-1', cardId: 'card-1', status: 'failed' }),
+    () => reporter({ jobId: 'job-1', cardId: 'card-1', claimId: 'claim-1', status: 'failed' }),
     (error) => error.code === 'visual_worker_persistence_retryable',
   );
 });
@@ -558,6 +624,7 @@ test('persistence findings keep allowlisted QA check names without provider mess
   await reporter({
     jobId: 'job-1',
     cardId: 'card-1',
+    claimId: 'claim-1',
     status: 'succeeded',
     asset: {
       id: 'asset-1',
@@ -594,6 +661,6 @@ test('worker persistence reporter reads its dedicated server-only environment co
       return { ok: true, status: 200, json: async () => ({ status: 'failed' }) };
     },
   });
-  await reporter({ jobId: 'job-1', cardId: 'card-1', status: 'failed' });
+  await reporter({ jobId: 'job-1', cardId: 'card-1', claimId: 'claim-1', status: 'failed' });
   assert.equal(request.options.headers.authorization, 'Bearer worker-secret');
 });

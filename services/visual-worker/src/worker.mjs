@@ -107,7 +107,8 @@ async function postWorkerCallback({ fetchImpl, root, workerToken, path, payload,
   if (!response.ok || response.status !== 200) {
     throw new RetryablePersistenceError();
   }
-  if (body?.status !== expectedStatus) {
+  const expectedStatuses = Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus];
+  if (!expectedStatuses.includes(body?.status)) {
     throw new RetryablePersistenceError();
   }
   return body;
@@ -129,6 +130,7 @@ export function createWorkerPersistenceReporter({ baseUrl, workerToken, fetchImp
       if (!event.asset || !event.review) throw new Error('successful worker events require asset and review');
       const assetId = assertSafeIdentifier(event.asset.id, 'assetId');
       const briefId = assertSafeIdentifier(event.asset.briefId, 'briefId');
+      const claimId = assertSafeIdentifier(event.claimId, 'claimId');
       assertSafeAssetPath(event.asset.path);
       if (event.asset.cardId !== undefined && event.asset.cardId !== cardId) {
         throw new VisualContractError('worker asset ownership is invalid', [
@@ -145,6 +147,7 @@ export function createWorkerPersistenceReporter({ baseUrl, workerToken, fetchImp
         provider_job_id: event.asset.providerJobId,
         version: event.asset.version,
       };
+      payload.claim_id = claimId;
       payload.review = {
         id: `review-${jobId}`,
         asset_id: assetId,
@@ -153,6 +156,9 @@ export function createWorkerPersistenceReporter({ baseUrl, workerToken, fetchImp
           ? event.review.findings.map(sanitizedFinding)
           : [],
       };
+    }
+    if (event.status === 'failed') {
+      payload.claim_id = assertSafeIdentifier(event.claimId, 'claimId');
     }
     return postWorkerCallback({
       fetchImpl,
@@ -168,14 +174,16 @@ export function createWorkerPersistenceReporter({ baseUrl, workerToken, fetchImp
     value: async ({ jobId, cardId }) => {
       const safeCardId = assertSafeIdentifier(cardId, 'cardId');
       const safeJobId = assertSafeIdentifier(jobId, 'jobId');
-      return postWorkerCallback({
+      const body = await postWorkerCallback({
         fetchImpl,
         root,
         workerToken,
         path: `/api/internal/flashcards/${encodeURIComponent(safeCardId)}/jobs/${encodeURIComponent(safeJobId)}/claim`,
         payload: {},
-        expectedStatus: 'running',
+        expectedStatus: ['running', 'succeeded', 'failed'],
       });
+      assertSafeIdentifier(body?.claim_id, 'claimId');
+      return body;
     },
   });
   return reporter;
@@ -277,7 +285,17 @@ export async function processVisualJob({
       { code: 'ownership_mismatch', field: 'brief' },
     ]);
   }
-  await persistenceReporter.claim({ jobId, cardId });
+  const claim = await persistenceReporter.claim({ jobId, cardId });
+  const claimStatus = claim?.status;
+  const claimId = assertSafeIdentifier(claim?.claim_id ?? claim?.claimId, 'claimId');
+  if (claimStatus === 'succeeded' || claimStatus === 'failed') {
+    return {
+      jobId,
+      cardId,
+      status: claimStatus,
+      reconciled: true,
+    };
+  }
   const status = createStatusReporter({ report });
   let persistenceAttempted = false;
 
@@ -319,34 +337,24 @@ export async function processVisualJob({
       review,
       generationPayload,
     };
+    const terminalSuccess = {
+      jobId,
+      cardId,
+      claimId,
+      status: result.status,
+      asset: result.asset,
+      review: result.review,
+    };
     try {
-      await persistenceReporter({
-        jobId,
-        cardId,
-        status: result.status,
-        asset: result.asset,
-        review: result.review,
-      });
+      await persistenceReporter(terminalSuccess);
       persistenceAttempted = true;
     } catch {
-      persistenceAttempted = true;
-      const failure = {
-        jobId,
-        cardId,
-        status: 'failed',
-        cardStatus: 'revision-requested',
-        error: {
-          code: 'visual_worker_persistence_retryable',
-          message: 'visual worker persistence is unavailable; retry the job',
-        },
-      };
       try {
-        await persistenceReporter(failure);
+        await persistenceReporter(terminalSuccess);
+        persistenceAttempted = true;
       } catch {
         throw new RetryablePersistenceError();
       }
-      await emitStatus(status, failure);
-      return failure;
     }
     await emitStatus(status, {
       jobId,
@@ -363,6 +371,7 @@ export async function processVisualJob({
     const failure = {
       jobId,
       cardId,
+      claimId,
       status: 'failed',
       cardStatus: 'revision-requested',
       error: publicError(error),

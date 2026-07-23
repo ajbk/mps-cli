@@ -4,7 +4,7 @@ mod tests {
     use mps_flashcards::{
         CanonicalCatalog, FlashcardCard, FlashcardStatus, VisualBrief, LOCKED_STYLE_PROFILE,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     fn catalog() -> CanonicalCatalog {
         CanonicalCatalog::load_json(include_str!("../../../data/reference/mps_database_v1_core.json"))
@@ -166,6 +166,7 @@ mod tests {
                 "card-1",
                 "job-1",
                 &FlashcardWorkerCompletion {
+                    claim_id: "claim-1".into(),
                     status: FlashcardJobStatus::Failed,
                     asset: None,
                     review: None,
@@ -177,11 +178,54 @@ mod tests {
             .contains("running"));
         assert_eq!(
             repository
-                .claim_job_for_worker("studio-a", "visual-worker", "card-1", "job-1")
+                .claim_job_for_worker("studio-a", "visual-worker", "card-1", "job-1", "claim-1")
                 .unwrap()
                 .status,
             FlashcardJobStatus::Running
         );
+        assert_eq!(
+            repository
+                .claim_job_for_worker(
+                    "studio-a",
+                    "visual-worker",
+                    "card-1",
+                    "job-1",
+                    "claim-1-retry",
+                )
+                .unwrap()
+                .input_json
+                .get("claim_id")
+                .and_then(Value::as_str),
+            Some("claim-1")
+        );
+        assert!(repository
+            .claim_job_for_worker(
+                "studio-a",
+                "other-worker",
+                "card-1",
+                "job-1",
+                "claim-other",
+            )
+            .expect_err("a running job must reject an unrelated worker claim")
+            .to_string()
+            .contains("another worker"));
+        assert!(repository
+            .complete_job_for_worker(
+                "studio-a",
+                "visual-worker",
+                "card-1",
+                "job-1",
+                &FlashcardWorkerCompletion {
+                    claim_id: "claim-other".into(),
+                    status: FlashcardJobStatus::Failed,
+                    asset: None,
+                    review: None,
+                    error_code: Some("visual_contract_invalid".into()),
+                },
+            )
+            .expect_err("completion must require the persisted worker claim")
+            .to_string()
+            .contains("claim token"));
 
         let completed = repository
             .complete_job_for_worker(
@@ -190,6 +234,7 @@ mod tests {
                 "card-1",
                 "job-1",
                 &FlashcardWorkerCompletion {
+                    claim_id: "claim-1".into(),
                     status: FlashcardJobStatus::Succeeded,
                     asset: Some(FlashcardAsset {
                         id: "asset-1".into(),
@@ -227,6 +272,7 @@ mod tests {
                 "card-1",
                 "job-1",
                 &FlashcardWorkerCompletion {
+                    claim_id: "claim-1".into(),
                     status: FlashcardJobStatus::Succeeded,
                     asset: Some(FlashcardAsset {
                         id: "asset-1".into(),
@@ -258,6 +304,7 @@ mod tests {
                 "card-1",
                 "job-1",
                 &FlashcardWorkerCompletion {
+                    claim_id: "claim-1".into(),
                     status: FlashcardJobStatus::Succeeded,
                     asset: Some(FlashcardAsset {
                         id: "asset-conflict".into(),
@@ -307,7 +354,7 @@ mod tests {
             )
             .unwrap();
         repository
-            .claim_job_for_worker("studio-a", "visual-worker", "card-1", "job-1-v2")
+            .claim_job_for_worker("studio-a", "visual-worker", "card-1", "job-1-v2", "claim-1-v2")
             .unwrap();
         repository
             .complete_job_for_worker(
@@ -316,6 +363,7 @@ mod tests {
                 "card-1",
                 "job-1-v2",
                 &FlashcardWorkerCompletion {
+                    claim_id: "claim-1-v2".into(),
                     status: FlashcardJobStatus::Succeeded,
                     asset: Some(FlashcardAsset {
                         id: "asset-1-v2".into(),
@@ -366,7 +414,7 @@ mod tests {
             )
             .unwrap();
         repository
-            .claim_job_for_worker("studio-a", "visual-worker", "card-2", "job-2")
+            .claim_job_for_worker("studio-a", "visual-worker", "card-2", "job-2", "claim-2")
             .unwrap();
         repository
             .complete_job_for_worker(
@@ -375,6 +423,7 @@ mod tests {
                 "card-2",
                 "job-2",
                 &FlashcardWorkerCompletion {
+                    claim_id: "claim-2".into(),
                     status: FlashcardJobStatus::Failed,
                     asset: None,
                     review: None,
@@ -420,7 +469,7 @@ mod tests {
             )
             .unwrap();
         repository
-            .claim_job_for_worker("studio-a", "visual-worker", "card-3", "job-3")
+            .claim_job_for_worker("studio-a", "visual-worker", "card-3", "job-3", "claim-3")
             .unwrap();
         repository
             .complete_job_for_worker(
@@ -429,6 +478,7 @@ mod tests {
                 "card-3",
                 "job-3",
                 &FlashcardWorkerCompletion {
+                    claim_id: "claim-3".into(),
                     status: FlashcardJobStatus::Succeeded,
                     asset: Some(FlashcardAsset {
                         id: "asset-3".into(),
@@ -776,6 +826,7 @@ pub struct FlashcardReview {
 
 #[derive(Debug, Clone)]
 pub struct FlashcardWorkerCompletion {
+    pub claim_id: String,
     pub status: FlashcardJobStatus,
     pub asset: Option<FlashcardAsset>,
     pub review: Option<FlashcardReview>,
@@ -1393,15 +1444,18 @@ impl FlashcardRepository {
         worker_id: &str,
         card_id: &str,
         job_id: &str,
+        claim_id: &str,
     ) -> Result<FlashcardJob> {
         require_identity("studio", studio_id)?;
-        require_identity("worker", worker_id)?;
+        require_identifier("worker", worker_id)?;
         require_identifier("card", card_id)?;
         require_identifier("job", job_id)?;
+        require_identifier("claim", claim_id)?;
         let studio_id = studio_id.to_owned();
         let worker_id = worker_id.to_owned();
         let card_id = card_id.to_owned();
         let job_id = job_id.to_owned();
+        let claim_id = claim_id.to_owned();
         self.runtime.block_on(async {
             let mut transaction = self.pool.begin().await?;
             assert_card_studio_in_transaction(&mut transaction, &studio_id, &card_id).await?;
@@ -1411,7 +1465,16 @@ impl FlashcardRepository {
             if job.card_id != card_id {
                 return Err(anyhow!("flashcard job does not belong to the card"));
             }
-            if job.status == FlashcardJobStatus::Running {
+            if matches!(
+                job.status,
+                FlashcardJobStatus::Running
+                    | FlashcardJobStatus::Succeeded
+                    | FlashcardJobStatus::Failed
+            ) {
+                let (claimed_by, _persisted_claim_id) = worker_claim_for_job(&job)?;
+                if claimed_by != worker_id {
+                    return Err(anyhow!("worker claim is held by another worker"));
+                }
                 transaction.commit().await?;
                 return Ok(job);
             }
@@ -1427,9 +1490,21 @@ impl FlashcardRepository {
             if card.status != FlashcardStatus::Generating {
                 return Err(anyhow!("worker claim requires a generating flashcard"));
             }
+            let mut input_json = job
+                .input_json
+                .as_object()
+                .cloned()
+                .ok_or_else(|| anyhow!("generation job input must be an object"))?;
+            if input_json.contains_key("claim_id") || input_json.contains_key("claimed_by") {
+                return Err(anyhow!("queued worker job already contains a claim"));
+            }
+            input_json.insert("claim_id".into(), Value::String(claim_id.clone()));
+            input_json.insert("claimed_by".into(), Value::String(worker_id.clone()));
+            job.input_json = Value::Object(input_json);
             job.status = FlashcardJobStatus::Running;
-            let updated = sqlx::query("UPDATE flashcard_jobs SET status = ?, updated_at = ? WHERE id = ? AND card_id = ? AND status = 'queued'")
+            let updated = sqlx::query("UPDATE flashcard_jobs SET status = ?, input_json = ?, updated_at = ? WHERE id = ? AND card_id = ? AND status = 'queued'")
                 .bind(job_status_to_db(&job.status))
+                .bind(serde_json::to_string(&job.input_json)?)
                 .bind(timestamp())
                 .bind(&job.id)
                 .bind(&card_id)
@@ -1448,6 +1523,7 @@ impl FlashcardRepository {
                     "studio_id": studio_id,
                     "worker_id": worker_id,
                     "job_id": job.id,
+                    "claim_id": claim_id,
                     "status": job_status_to_db(&job.status),
                 }),
             )
@@ -1483,6 +1559,7 @@ impl FlashcardRepository {
             if job.card_id != card_id {
                 return Err(anyhow!("flashcard job does not belong to the card"));
             }
+            validate_worker_claim(&job, &worker_id, &completion.claim_id)?;
             if matches!(job.status, FlashcardJobStatus::Succeeded | FlashcardJobStatus::Failed) {
                 validate_terminal_worker_retry(&mut transaction, &job, &card_id, &completion)
                     .await?;
@@ -2403,6 +2480,31 @@ fn is_safe_worker_asset_path(value: &str) -> bool {
     }
     value.starts_with("web/assets/flashcard-images/")
         || value.starts_with("docs/assets/flashcard-images/")
+}
+
+fn worker_claim_for_job(job: &FlashcardJob) -> Result<(String, String)> {
+    let claim_id = job
+        .input_json
+        .get("claim_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("worker job claim is missing"))?;
+    let claimed_by = job
+        .input_json
+        .get("claimed_by")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("worker job claimant is missing"))?;
+    require_identifier("claim", claim_id)?;
+    require_identifier("worker", claimed_by)?;
+    Ok((claimed_by.to_owned(), claim_id.to_owned()))
+}
+
+fn validate_worker_claim(job: &FlashcardJob, worker_id: &str, claim_id: &str) -> Result<()> {
+    require_identifier("claim", claim_id)?;
+    let (claimed_by, persisted_claim_id) = worker_claim_for_job(job)?;
+    if claimed_by != worker_id || persisted_claim_id != claim_id {
+        return Err(anyhow!("worker claim token does not match the job"));
+    }
+    Ok(())
 }
 
 async fn validate_terminal_worker_retry(

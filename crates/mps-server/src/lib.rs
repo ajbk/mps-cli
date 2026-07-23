@@ -375,6 +375,13 @@ struct JobResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct WorkerClaimResponse {
+    #[serde(flatten)]
+    job: JobResponse,
+    claim_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateReviewRequest {
@@ -413,6 +420,7 @@ struct WorkerReviewRequest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkerCompletionRequest {
+    claim_id: String,
     status: WorkerCompletionStatus,
     asset: Option<WorkerAssetRequest>,
     review: Option<WorkerReviewRequest>,
@@ -434,6 +442,7 @@ impl WorkerCompletionRequest {
                 }
                 let findings_json = sanitize_worker_findings(&review.findings_json)?;
                 FlashcardWorkerCompletion {
+                    claim_id: self.claim_id,
                     status: FlashcardJobStatus::Succeeded,
                     asset: Some(FlashcardAsset {
                         id: asset.id,
@@ -465,6 +474,7 @@ impl WorkerCompletionRequest {
                     return Err(ApiError::bad_request("failed worker completion cannot include an asset or review"));
                 }
                 FlashcardWorkerCompletion {
+                    claim_id: self.claim_id,
                     status: FlashcardJobStatus::Failed,
                     asset: None,
                     review: None,
@@ -861,18 +871,25 @@ async fn claim_visual_job(
     State(state): State<AppState>,
     auth: AuthContext,
     Path((card_id, job_id)): Path<(String, String)>,
-) -> Result<Json<JobResponse>, ApiError> {
+) -> Result<Json<WorkerClaimResponse>, ApiError> {
     auth.require(VISUAL_WORKER)?;
     if auth.actor_kind != AuditActorKind::System {
         return Err(ApiError::forbidden("visual worker service identity is required"));
     }
     let studio_id = auth.studio_id;
     let worker_id = auth.teacher_id;
+    let claim_id = next_id("visual-claim");
     let claimed = run_repository(state.repository.clone(), move |repository| {
-        repository.claim_job_for_worker(&studio_id, &worker_id, &card_id, &job_id)
+        repository.claim_job_for_worker(
+            &studio_id,
+            &worker_id,
+            &card_id,
+            &job_id,
+            &claim_id,
+        )
     })
     .await?;
-    Ok(Json(job_response(claimed)))
+    worker_claim_response(claimed)
 }
 
 async fn complete_visual_job(
@@ -1154,6 +1171,20 @@ fn job_response(job: FlashcardJob) -> JobResponse {
         },
         error: job.error,
     }
+}
+
+fn worker_claim_response(job: FlashcardJob) -> Result<Json<WorkerClaimResponse>, ApiError> {
+    let claim_id = job
+        .input_json
+        .get("claim_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(ApiError::internal)?
+        .to_owned();
+    Ok(Json(WorkerClaimResponse {
+        job: job_response(job.clone()),
+        claim_id,
+    }))
 }
 
 fn named_contexts(values: &[String]) -> Vec<NamedContext> {
@@ -1586,7 +1617,11 @@ mod routes {
     }
 
     fn visual_worker(studio_id: &str) -> AuthContext {
-        AuthContext::new(studio_id, "visual-worker", [VISUAL_WORKER])
+        visual_worker_as(studio_id, "visual-worker")
+    }
+
+    fn visual_worker_as(studio_id: &str, worker_id: &str) -> AuthContext {
+        AuthContext::new(studio_id, worker_id, [VISUAL_WORKER])
             .with_actor_kind(AuditActorKind::System)
     }
 
@@ -1973,6 +2008,31 @@ mod routes {
         );
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["status"], "running");
+        let claim_id = body["claim_id"].as_str().unwrap().to_owned();
+
+        let (status, repeated_claim) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/claim",
+                visual_worker("studio-a"),
+                None,
+            ),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(repeated_claim["status"], "running");
+        assert_eq!(repeated_claim["claim_id"].as_str(), Some(claim_id.as_str()));
+
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/internal/flashcards/card-a/jobs/job-a/claim",
+                visual_worker_as("studio-a", "other-worker"),
+                None,
+            ),
+        );
+        assert_eq!(status, StatusCode::CONFLICT);
 
         let (status, body) = send(
             &fixture.app,
@@ -1985,6 +2045,7 @@ mod routes {
         );
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["status"], "running");
+        assert!(body.get("claim_id").is_none());
 
         let (status, _) = send(
             &fixture.app,
@@ -1993,6 +2054,7 @@ mod routes {
                 "/api/internal/flashcards/card-a/jobs/job-a/complete",
                 auth("studio-a"),
                 Some(json!({
+                    "claim_id": claim_id,
                     "status": "succeeded",
                     "asset": {
                         "id": "asset-a",
@@ -2029,6 +2091,7 @@ mod routes {
                 "/api/internal/flashcards/card-a/jobs/job-a/complete",
                 visual_worker("studio-a"),
                 Some(json!({
+                    "claim_id": claim_id,
                     "status": "succeeded",
                     "asset": {
                         "id": "asset-a",
@@ -2064,6 +2127,7 @@ mod routes {
                 "/api/internal/flashcards/card-a/jobs/job-a/complete",
                 visual_worker("studio-a"),
                 Some(json!({
+                    "claim_id": claim_id,
                     "status": "succeeded",
                     "asset": {
                         "id": "asset-a",
@@ -2091,12 +2155,94 @@ mod routes {
                 "/api/internal/flashcards/card-a/jobs/job-a/complete",
                 visual_worker("studio-a"),
                 Some(json!({
+                    "claim_id": claim_id,
                     "status": "failed",
                     "error_code": "image_generation_failed"
                 })),
             ),
         );
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn concurrent_visual_worker_claims_are_exclusive() {
+        let fixture = test_app();
+        fixture
+            .repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-a"))
+            .unwrap();
+        fixture
+            .repository
+            .save_visual_brief_for_studio(
+                "studio-a",
+                "teacher-01",
+                &VisualBrief {
+                    id: "brief-a".into(),
+                    card_id: "card-a".into(),
+                    exercise_id: "source_chair_achilles_stretch_row_4".into(),
+                    style_profile: LOCKED_STYLE_PROFILE.into(),
+                    character_id: LOCKED_CHARACTER_ID.into(),
+                    outfit: LOCKED_OUTFIT.into(),
+                    pose_json: json!({"landmarks": [], "contact_points": []}),
+                    apparatus: "Chair".into(),
+                    palette_json: json!({"cheekAccent": DUSTY_ROSE_CHEEK_ACCENT}),
+                    must_show_json: json!([]),
+                    must_not_show_json: json!(["arrows", "text", "logos", "watermark"]),
+                    version: 1,
+                },
+            )
+            .unwrap();
+        fixture
+            .repository
+            .create_job_for_studio(
+                "studio-a",
+                "teacher-01",
+                &FlashcardJob {
+                    id: "job-a".into(),
+                    card_id: "card-a".into(),
+                    kind: FlashcardJobKind::Generate,
+                    status: FlashcardJobStatus::Queued,
+                    input_json: json!({"brief_id": "brief-a"}),
+                    output_json: None,
+                    error: None,
+                },
+            )
+            .unwrap();
+
+        let runtime = tokio::runtime::Runtime::new().expect("create test runtime");
+        let (first, second) = runtime.block_on(async {
+            tokio::join!(
+                fixture.app.clone().oneshot(request(
+                    Method::POST,
+                    "/api/internal/flashcards/card-a/jobs/job-a/claim",
+                    visual_worker_as("studio-a", "worker-a"),
+                    None,
+                )),
+                fixture.app.clone().oneshot(request(
+                    Method::POST,
+                    "/api/internal/flashcards/card-a/jobs/job-a/claim",
+                    visual_worker_as("studio-a", "worker-b"),
+                    None,
+                )),
+            )
+        });
+        let first_status = first.expect("first claim response").status();
+        let second_status = second.expect("second claim response").status();
+
+        assert!(
+            (first_status == StatusCode::OK && second_status == StatusCode::CONFLICT)
+                || (first_status == StatusCode::CONFLICT && second_status == StatusCode::OK),
+            "concurrent claims must yield exactly one winner: {first_status} / {second_status}"
+        );
+        assert_eq!(
+            fixture
+                .repository
+                .get_job_for_studio("studio-a", "card-a", "job-a")
+                .unwrap()
+                .unwrap()
+                .status,
+            FlashcardJobStatus::Running
+        );
     }
 
     #[test]
