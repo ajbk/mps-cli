@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'mpsClientStudio.v2';
+const FLASHCARD_SELECTED_KEY = 'mps.flashcard.selectedDraftId';
 
 const archetypes = [
     'Office Syndrome',
@@ -112,7 +113,7 @@ const state = {
     flashcardCategory: '',
     flashcardQuery: '',
     flashcardLevel: 'all',
-    selectedFlashcardId: null,
+    selectedFlashcardId: localStorage.getItem(FLASHCARD_SELECTED_KEY) || null,
     plan: null,
     markdown: '',
     data: loadData()
@@ -879,10 +880,11 @@ async function createFlashcardDraft(cardId) {
         exercise_id: draft.source_exercise_id,
         style_profile: draft.style_profile
     };
-    draft.automated_review = { status: 'pending' };
+    draft.automated_review = { status: 'pending', version: draft.version };
     const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
     await store.saveDraft(draft);
     state.selectedFlashcardId = draft.id;
+    localStorage.setItem(FLASHCARD_SELECTED_KEY, draft.id);
     await renderFlashcards();
     showToast(sourceCard.name + ' is ready for teacher editing');
 }
@@ -892,15 +894,45 @@ async function selectedFlashcardDraft() {
     return window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).getCard(state.selectedFlashcardId);
 }
 
+function canonicalSourceForCard(card) {
+    const draftPrefix = 'draft:';
+    const cardId = String(card?.id || '');
+    if (!cardId.startsWith(draftPrefix)) return null;
+    const source = flashcards().find((item) => item.id === cardId.slice(draftPrefix.length));
+    if (!source) return null;
+    return {
+        exercise_id: source.id,
+        style_profile: window.MPS_FLASHCARD_REVIEW.visualContract.style_profile
+    };
+}
+
 function editorTextArea(name, label, card) {
     return '<label class="field"><span>' + label + '</span><textarea name="' + name + '">' +
         escapeHtml(card[name] || '') + '</textarea></label>';
 }
 
+function renderProposedChanges(card) {
+    const proposals = card.proposed_changes;
+    const fields = [
+        ['Front question', 'front'],
+        ['Cue', 'cue'],
+        ['Regression', 'regress'],
+        ['Progression', 'progress']
+    ].filter(([, key]) => proposals && proposals[key]);
+    if (!fields.length) return '<p class="muted">No AI proposal is saved for this version.</p>';
+    return '<dl class="proposed-fields">' + fields.map(([label, key]) =>
+        '<div><dt>' + escapeHtml(label) + '</dt><dd>' + nl(proposals[key]) + '</dd></div>'
+    ).join('') + '</dl>';
+}
+
 function renderFlashcardEditorForm(card) {
     const review = window.MPS_FLASHCARD_REVIEW;
-    const canApprove = card.status === 'needs-review' && review.automatedReviewPassed(card);
-    const canPublish = review.canPublish(card);
+    const canonicalSource = canonicalSourceForCard(card);
+    const canApprove = card.status === 'needs-review'
+        && review.automatedReviewPassed(card)
+        && review.sourceIsUnchanged(card, canonicalSource)
+        && review.visualContractMatches(card);
+    const canPublish = review.canPublish(card, canonicalSource);
     const image = card.image
         ? '<img src="' + safeAssetUrl(card.image) + '" alt="Current visual for ' + escapeHtml(card.name) + '">'
         : '<div class="flashcard-image-empty">No image asset yet</div>';
@@ -924,6 +956,8 @@ function renderFlashcardEditorForm(card) {
         editorTextArea('front', 'Front question', card) + editorTextArea('cue', 'Cue', card) +
         editorTextArea('regress', 'Regression', card) + editorTextArea('progress', 'Progression', card) +
         '<button class="secondary" type="submit">Save teacher changes</button></section></form>' +
+        '<section class="flashcard-editor-section"><h4>AI proposal · unsaved</h4><p class="muted">These generated values are separate from the accepted fields above. Copy or adapt them manually, then save teacher changes.</p>' +
+        renderProposedChanges(card) + '</section>' +
         '<section class="flashcard-editor-section visual-brief"><h4>Locked visual brief</h4><p><b>Style:</b> mono-gesture-ink-pilates-v1 · <b>Character:</b> teacher-01</p><pre>' +
         escapeHtml(visualBrief) + '</pre></section><section class="flashcard-editor-section flashcard-asset-preview"><h4>Image asset · version ' +
         escapeHtml(card.version || 1) + '</h4>' + image + '</section><section class="flashcard-editor-section review-actions"><h4>Review controls</h4><p>Automated review: <b>' +
@@ -964,7 +998,10 @@ async function saveFlashcardEditor(form) {
 async function applyFlashcardAction(action) {
     const card = await selectedFlashcardDraft();
     if (!card) return;
-    const details = action === 'request-revision' ? { note: window.prompt('Revision request for this proposal:') || '' } : {};
+    const details = {
+        canonicalSource: canonicalSourceForCard(card),
+        ...(action === 'request-revision' ? { note: window.prompt('Revision request for this proposal:') || '' } : {})
+    };
     try {
         const updated = window.MPS_FLASHCARD_REVIEW.transition(card, action, details);
         await window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).saveDraft(updated);

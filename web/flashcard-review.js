@@ -7,25 +7,29 @@
     };
 
     function automatedReviewPassed(card) {
-        return card?.automated_review?.status === 'passed';
+        return card?.automated_review?.status === 'passed'
+            && card.automated_review.version === card.version;
     }
 
-    function sourceIsUnchanged(card) {
+    function sourceIsUnchanged(card, canonicalSource) {
         const snapshot = card?.source_snapshot;
-        return Boolean(snapshot)
-            && snapshot.exercise_id === card.source_exercise_id
-            && snapshot.style_profile === card.style_profile;
+        return Boolean(snapshot && canonicalSource)
+            && snapshot.exercise_id === canonicalSource.exercise_id
+            && snapshot.style_profile === canonicalSource.style_profile
+            && card.source_exercise_id === canonicalSource.exercise_id
+            && card.style_profile === canonicalSource.style_profile;
     }
 
     function visualContractMatches(card) {
         return Object.entries(visualContract).every(([key, value]) => card?.[key] === value);
     }
 
-    function canPublish(card) {
+    function canPublish(card, canonicalSource) {
         return card?.status === 'approved'
             && automatedReviewPassed(card)
-            && Boolean(card.teacher_review)
-            && sourceIsUnchanged(card)
+            && card.teacher_review?.status === 'approved'
+            && card.teacher_review.version === card.version
+            && sourceIsUnchanged(card, canonicalSource)
             && visualContractMatches(card);
     }
 
@@ -36,7 +40,18 @@
             if (!['draft', 'revision-requested'].includes(card.status)) {
                 throw new Error('Cannot generate this flashcard');
             }
-            return { ...card, status: 'generating' };
+            const version = (Number(card.version) || 0) + 1;
+            return {
+                ...card,
+                status: 'generating',
+                version,
+                image: null,
+                current_asset_id: null,
+                asset_version: null,
+                automated_review: { status: 'pending', version },
+                teacher_review: null,
+                proposed_changes: null
+            };
         }
 
         if (action === 'submit-review') {
@@ -54,15 +69,23 @@
         if (action === 'approve') {
             if (card.status !== 'needs-review') throw new Error('Cannot approve this flashcard');
             if (!automatedReviewPassed(card)) throw new Error('Automated review must pass before approval');
+            if (!sourceIsUnchanged(card, details.canonicalSource)) {
+                throw new Error('Canonical source must match before approval');
+            }
+            if (!visualContractMatches(card)) throw new Error('Visual contract must match before approval');
             return {
                 ...card,
                 status: 'approved',
-                teacher_review: { reviewer: details.reviewer || 'Teacher', status: 'approved' }
+                teacher_review: {
+                    reviewer: details.reviewer || 'Teacher',
+                    status: 'approved',
+                    version: card.version
+                }
             };
         }
 
         if (action === 'publish') {
-            if (!canPublish(card)) throw new Error('Cannot publish this flashcard until every review guard passes');
+            if (!canPublish(card, details.canonicalSource)) throw new Error('Cannot publish this flashcard until every review guard passes');
             return { ...card, status: 'published' };
         }
 

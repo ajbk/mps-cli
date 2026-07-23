@@ -13,7 +13,8 @@ async function loadReview() {
 function card(overrides = {}) {
     return {
         status: 'draft',
-        automated_review: { status: 'pending' },
+        version: 1,
+        automated_review: { status: 'pending', version: 1 },
         teacher_review: null,
         source_snapshot: { exercise_id: 'M02', style_profile: 'mono-gesture-ink-pilates-v1' },
         source_exercise_id: 'M02',
@@ -25,10 +26,17 @@ function card(overrides = {}) {
     };
 }
 
+const canonicalSource = { exercise_id: 'M02', style_profile: 'mono-gesture-ink-pilates-v1' };
+
 test('a draft can move to generating', async () => {
     const review = await loadReview();
 
-    assert.equal(review.transition(card(), 'generate').status, 'generating');
+    const generating = review.transition(card(), 'generate');
+    assert.equal(generating.status, 'generating');
+    assert.equal(generating.version, 2);
+    assert.equal(generating.automated_review.status, 'pending');
+    assert.equal(generating.automated_review.version, 2);
+    assert.equal(generating.teacher_review, null);
 });
 
 test('a generating card cannot be approved', async () => {
@@ -39,40 +47,91 @@ test('a generating card cannot be approved', async () => {
 
 test('a needs-review card with failed automated review cannot be approved', async () => {
     const review = await loadReview();
-    const pendingApproval = card({ status: 'needs-review', automated_review: { status: 'failed' } });
+    const pendingApproval = card({ status: 'needs-review', automated_review: { status: 'failed', version: 1 } });
 
     assert.throws(() => review.transition(pendingApproval, 'approve'), /automated review/i);
 });
 
 test('a passed needs-review card can become approved', async () => {
     const review = await loadReview();
-    const pendingApproval = card({ status: 'needs-review', automated_review: { status: 'passed' } });
+    const pendingApproval = card({ status: 'needs-review', automated_review: { status: 'passed', version: 1 } });
 
-    const approved = review.transition(pendingApproval, 'approve', { reviewer: 'Teacher' });
+    const approved = review.transition(pendingApproval, 'approve', { reviewer: 'Teacher', canonicalSource });
     assert.equal(approved.status, 'approved');
     assert.equal(approved.teacher_review.reviewer, 'Teacher');
+    assert.equal(approved.teacher_review.version, 1);
 });
 
 test('only an approved card can become published', async () => {
     const review = await loadReview();
 
-    assert.throws(() => review.transition(card({ status: 'needs-review', automated_review: { status: 'passed' } }), 'publish'), /cannot publish/i);
+    assert.throws(() => review.transition(card({ status: 'needs-review', automated_review: { status: 'passed', version: 1 } }), 'publish', { canonicalSource }), /cannot publish/i);
     assert.equal(review.transition(card({
         status: 'approved',
-        automated_review: { status: 'passed' },
-        teacher_review: { reviewer: 'Teacher' }
-    }), 'publish').status, 'published');
+        automated_review: { status: 'passed', version: 1 },
+        teacher_review: { reviewer: 'Teacher', status: 'approved', version: 1 }
+    }), 'publish', { canonicalSource }).status, 'published');
 });
 
 test('publish guard fails closed when source exercise or style profile changed', async () => {
     const review = await loadReview();
     const approved = card({
         status: 'approved',
-        automated_review: { status: 'passed' },
-        teacher_review: { reviewer: 'Teacher' }
+        automated_review: { status: 'passed', version: 1 },
+        teacher_review: { reviewer: 'Teacher', status: 'approved', version: 1 }
     });
 
-    assert.equal(review.canPublish(approved), true);
-    assert.equal(review.canPublish({ ...approved, source_exercise_id: 'M03' }), false);
-    assert.equal(review.canPublish({ ...approved, style_profile: 'other-style' }), false);
+    assert.equal(review.canPublish(approved, canonicalSource), true);
+    assert.equal(review.canPublish({ ...approved, source_exercise_id: 'M03' }, canonicalSource), false);
+    assert.equal(review.canPublish({ ...approved, style_profile: 'other-style' }, canonicalSource), false);
+});
+
+test('regeneration clears stale reviews and increments the asset version', async () => {
+    const review = await loadReview();
+    const approved = card({
+        status: 'approved',
+        automated_review: { status: 'passed', version: 1 },
+        teacher_review: { reviewer: 'Teacher', status: 'approved', version: 1 },
+        current_asset_id: 'asset-v1',
+        proposed_changes: { cue: 'Old generated cue' }
+    });
+
+    const revisionRequested = review.transition(approved, 'request-revision');
+    const generating = review.transition(revisionRequested, 'generate');
+
+    assert.equal(generating.version, 2);
+    assert.equal(generating.current_asset_id, null);
+    assert.equal(generating.teacher_review, null);
+    assert.equal(generating.proposed_changes, null);
+    assert.equal(review.canPublish(generating, canonicalSource), false);
+});
+
+test('canonical source prevents a mutable snapshot bypass', async () => {
+    const review = await loadReview();
+    const approved = card({
+        status: 'approved',
+        source_exercise_id: 'M03',
+        style_profile: 'other-style',
+        source_snapshot: { exercise_id: 'M03', style_profile: 'other-style' },
+        automated_review: { status: 'passed', version: 1 },
+        teacher_review: { reviewer: 'Teacher', status: 'approved', version: 1 }
+    });
+
+    assert.equal(review.sourceIsUnchanged(approved, canonicalSource), false);
+    assert.equal(review.canPublish(approved, canonicalSource), false);
+});
+
+test('a rejected or stale teacher review cannot publish', async () => {
+    const review = await loadReview();
+    const approved = card({
+        status: 'approved',
+        automated_review: { status: 'passed', version: 1 },
+        teacher_review: { reviewer: 'Teacher', status: 'rejected', version: 1 }
+    });
+
+    assert.equal(review.canPublish(approved, canonicalSource), false);
+    assert.equal(review.canPublish({
+        ...approved,
+        teacher_review: { reviewer: 'Teacher', status: 'approved', version: 0 }
+    }, canonicalSource), false);
 });
