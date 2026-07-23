@@ -160,6 +160,28 @@ test('API mode lists cards through GET /api/flashcards and normalizes teaching c
     assert.equal(cards[0].teaching_copy_json.front, 'What does it assess?');
 });
 
+test('API library merges static workbook cards with persisted cards by source ID', async () => {
+    const { store } = await loadStore({ apiBase: 'https://mps.test' });
+    const merged = store.mergeCatalogCards([
+        { id: 'M02', source_exercise_id: 'source_mat_pelvic_clock_row_1', category: 'Mat', name: 'Pelvic Clock' },
+        { id: 'M03', source_exercise_id: 'source_mat_knee_folds_row_2', category: 'Mat', name: 'Knee Folds' }
+    ], [
+        {
+            id: 'card-2',
+            source_exercise_id: 'source_mat_pelvic_clock_row_1',
+            category: 'Mat',
+            name: 'Pelvic Clock',
+            status: 'approved',
+            teaching_copy_json: { cue: 'Approved cue' }
+        }
+    ]);
+
+    assert.deepEqual(merged.map((card) => card.id), ['card-2', 'M03']);
+    assert.equal(merged[0].status, 'approved');
+    assert.equal(merged[0].cue, 'Approved cue');
+    assert.equal(merged[1].source_exercise_id, 'source_mat_knee_folds_row_2');
+});
+
 test('missing API base keeps local demo drafts in browser storage', async () => {
     const storage = new Map();
     const { store } = await loadStore({ storage });
@@ -190,6 +212,49 @@ test('API generation creates a job and polls it until terminal status', async ()
     assert.match(calls[0].options.body, /"brief_id":"brief-1"/);
     assert.equal(completed.status, 'succeeded');
     assert.equal(completed.review_findings[0].check, 'pose');
+});
+
+test('API normalization exposes a sanitized asset URL and latest review findings', async () => {
+    const { store } = await loadStore({ apiBase: 'https://mps.test' });
+    const card = store.normalizeCard({
+        id: 'card-1',
+        asset: {
+            id: 'asset-1',
+            version: 2,
+            status: 'needs-review',
+            url: '/api/flashcards/card-1/assets/asset-1'
+        },
+        automated_review: {
+            id: 'review-1',
+            status: 'failed',
+            findings: [{ code: 'visual_check_failed', check: 'pose', message: 'Pose needs work' }]
+        }
+    });
+
+    assert.equal(card.image, 'https://mps.test/api/flashcards/card-1/assets/asset-1');
+    assert.equal(card.review_findings[0].message, 'Pose needs work');
+    assert.equal(card.automated_review.status, 'failed');
+});
+
+test('API submit review is never sent while a generation card is active', async () => {
+    const { store, calls } = await loadStore({ apiBase: 'https://mps.test' });
+
+    assert.equal(store.canSubmitReview({ status: 'generating' }, true), false);
+    assert.equal(store.canSubmitReview({ status: 'needs-review' }, true), false);
+    assert.equal(store.canSubmitReview({ status: 'generating' }, false), true);
+    assert.equal(calls.length, 0);
+});
+
+test('API auth failure explains the required BFF session handoff', async () => {
+    const { store } = await loadStore({
+        apiBase: 'https://mps.test',
+        responses: [{ status: 401, ok: false, body: { error: { message: 'authenticated session required' } } }]
+    });
+
+    await assert.rejects(
+        () => store.listCards(),
+        /MPS session is missing or expired.*BFF/i
+    );
 });
 
 test('review findings are escaped before they become HTML', async () => {

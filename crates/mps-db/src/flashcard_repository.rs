@@ -844,6 +844,12 @@ pub struct FlashcardWorkerCompletion {
     pub error_code: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct FlashcardVisualDetails {
+    pub asset: Option<FlashcardAsset>,
+    pub automated_review: Option<FlashcardReview>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditActorKind {
     Teacher,
@@ -1074,6 +1080,134 @@ impl FlashcardRepository {
             .await?
             .map(card_from_row)
             .transpose()
+        })
+    }
+
+    pub fn visual_details_for_studio(
+        &self,
+        studio_id: &str,
+        card_id: &str,
+    ) -> Result<FlashcardVisualDetails> {
+        require_identity("studio", studio_id)?;
+        let studio_id = studio_id.to_owned();
+        let card_id = card_id.to_owned();
+        self.runtime.block_on(async {
+            let asset: Option<(String, String, String, String, Option<String>, i64, String)> =
+                sqlx::query_as(
+                    "SELECT assets.id, assets.card_id, assets.brief_id, assets.repo_path,
+                            assets.provider_job_id, assets.version, assets.status
+                     FROM flashcard_assets AS assets
+                     WHERE assets.card_id = ?
+                       AND assets.id = (SELECT current_asset_id FROM flashcard_cards WHERE id = ?)
+                       AND EXISTS (
+                           SELECT 1 FROM flashcard_audit_events AS owner
+                           WHERE owner.card_id = assets.card_id
+                             AND owner.action = 'flashcard.created'
+                             AND json_extract(owner.payload_json, '$.studio_id') = ?
+                       )",
+                )
+                .bind(&card_id)
+                .bind(&card_id)
+                .bind(&studio_id)
+                .fetch_optional(&self.pool)
+                .await?;
+            let asset = asset.map(asset_from_tuple).transpose()?;
+            let automated_review = if let Some(asset) = asset.as_ref() {
+                let review: Option<(String, String, String, i64, String, i64, Option<String>)> =
+                    sqlx::query_as(
+                        "SELECT reviews.id, reviews.card_id, reviews.asset_id, reviews.passed,
+                                reviews.findings_json, assets.version, reviews.reviewer_id
+                         FROM flashcard_reviews AS reviews
+                         JOIN flashcard_assets AS assets ON assets.id = reviews.asset_id
+                         WHERE reviews.card_id = ?
+                           AND reviews.asset_id = ?
+                           AND reviews.reviewer_kind = 'automated'
+                           AND EXISTS (
+                               SELECT 1 FROM flashcard_audit_events AS owner
+                               WHERE owner.card_id = reviews.card_id
+                                 AND owner.action = 'flashcard.created'
+                                 AND json_extract(owner.payload_json, '$.studio_id') = ?
+                           )
+                         ORDER BY reviews.created_at DESC, reviews.rowid DESC
+                         LIMIT 1",
+                    )
+                    .bind(&card_id)
+                    .bind(&asset.id)
+                    .bind(&studio_id)
+                    .fetch_optional(&self.pool)
+                    .await?;
+                review.map(review_from_tuple).transpose()?
+            } else {
+                None
+            };
+            Ok(FlashcardVisualDetails {
+                asset,
+                automated_review,
+            })
+        })
+    }
+
+    pub fn asset_for_studio(
+        &self,
+        studio_id: &str,
+        card_id: &str,
+        asset_id: &str,
+    ) -> Result<Option<FlashcardAsset>> {
+        require_identity("studio", studio_id)?;
+        let studio_id = studio_id.to_owned();
+        let card_id = card_id.to_owned();
+        let asset_id = asset_id.to_owned();
+        self.runtime.block_on(async {
+            let asset: Option<(String, String, String, String, Option<String>, i64, String)> =
+                sqlx::query_as(
+                    "SELECT assets.id, assets.card_id, assets.brief_id, assets.repo_path,
+                            assets.provider_job_id, assets.version, assets.status
+                     FROM flashcard_assets AS assets
+                     WHERE assets.id = ? AND assets.card_id = ?
+                       AND EXISTS (
+                           SELECT 1 FROM flashcard_audit_events AS owner
+                           WHERE owner.card_id = assets.card_id
+                             AND owner.action = 'flashcard.created'
+                             AND json_extract(owner.payload_json, '$.studio_id') = ?
+                       )",
+                )
+                .bind(asset_id)
+                .bind(card_id)
+                .bind(studio_id)
+                .fetch_optional(&self.pool)
+                .await?;
+            asset.map(asset_from_tuple).transpose()
+        })
+    }
+
+    pub fn has_active_generation_job_for_studio(
+        &self,
+        studio_id: &str,
+        card_id: &str,
+    ) -> Result<bool> {
+        require_identity("studio", studio_id)?;
+        let studio_id = studio_id.to_owned();
+        let card_id = card_id.to_owned();
+        self.runtime.block_on(async {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT EXISTS (
+                     SELECT 1 FROM flashcard_jobs AS jobs
+                     WHERE jobs.card_id = ?
+                       AND jobs.kind IN ('generate', 'regenerate')
+                       AND jobs.status IN ('queued', 'running')
+                       AND EXISTS (
+                           SELECT 1 FROM flashcard_audit_events AS owner
+                           WHERE owner.card_id = jobs.card_id
+                             AND owner.action = 'flashcard.created'
+                             AND json_extract(owner.payload_json, '$.studio_id') = ?
+                       )
+                 )",
+            )
+            .bind(card_id)
+            .bind(studio_id)
+            .fetch_one(&self.pool)
+            .await?;
+            Ok(exists == 1)
         })
     }
 
@@ -2715,3 +2849,41 @@ fn card_from_row(row: CardRow) -> Result<FlashcardCard> { Ok(FlashcardCard { id:
 fn job_kind_from_db(kind: &str) -> Result<FlashcardJobKind> { match kind { "generate" => Ok(FlashcardJobKind::Generate), "review" => Ok(FlashcardJobKind::Review), "regenerate" => Ok(FlashcardJobKind::Regenerate), _ => Err(anyhow!("unknown flashcard job kind: {kind}")) } }
 fn job_status_from_db(status: &str) -> Result<FlashcardJobStatus> { match status { "queued" => Ok(FlashcardJobStatus::Queued), "running" => Ok(FlashcardJobStatus::Running), "succeeded" => Ok(FlashcardJobStatus::Succeeded), "failed" => Ok(FlashcardJobStatus::Failed), _ => Err(anyhow!("unknown flashcard job status: {status}")) } }
 fn job_from_row(row: JobRow) -> Result<FlashcardJob> { Ok(FlashcardJob { id: row.id, card_id: row.card_id, kind: job_kind_from_db(&row.kind)?, status: job_status_from_db(&row.status)?, input_json: serde_json::from_str(&row.input_json)?, output_json: row.output_json.map(|value| serde_json::from_str(&value)).transpose()?, error: row.error }) }
+
+fn asset_from_tuple(
+    row: (String, String, String, String, Option<String>, i64, String),
+) -> Result<FlashcardAsset> {
+    Ok(FlashcardAsset {
+        id: row.0,
+        card_id: row.1,
+        brief_id: row.2,
+        repo_path: row.3,
+        provider_job_id: row.4,
+        version: row.5,
+        status: asset_status_from_db(&row.6)?,
+    })
+}
+
+fn review_from_tuple(
+    row: (String, String, String, i64, String, i64, Option<String>),
+) -> Result<FlashcardReview> {
+    Ok(FlashcardReview {
+        id: row.0,
+        card_id: row.1,
+        asset_id: row.2,
+        passed: row.3 == 1,
+        findings_json: serde_json::from_str(&row.4)?,
+        reviewer_kind: ReviewerKind::Automated,
+        reviewer_id: row.6,
+    })
+}
+
+fn asset_status_from_db(status: &str) -> Result<FlashcardAssetStatus> {
+    match status {
+        "generating" => Ok(FlashcardAssetStatus::Generating),
+        "needs-review" => Ok(FlashcardAssetStatus::NeedsReview),
+        "rejected" => Ok(FlashcardAssetStatus::Rejected),
+        "approved" => Ok(FlashcardAssetStatus::Approved),
+        _ => Err(anyhow!("unknown flashcard asset status: {status}")),
+    }
+}

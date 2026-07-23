@@ -206,6 +206,11 @@ function safeAssetUrl(value) {
     return String(value || '').replace(/["'()\\\n\r\f]/g, '');
 }
 
+function safeHandoffUrl(value) {
+    const url = String(value || '').trim();
+    return /^https:\/\//i.test(url) || url.startsWith('/') ? url : '';
+}
+
 function value(id) {
     return $(`#${id}`).value;
 }
@@ -875,11 +880,12 @@ async function renderFlashcards() {
     let cards = store.isApiMode ? state.flashcardLibrary : flashcards();
     if (store.isApiMode && !cards) {
         try {
-            cards = await store.listCards();
+            const persistedCards = await store.listCards();
+            cards = store.mergeCatalogCards(flashcards(), persistedCards);
             state.flashcardLibrary = cards;
             state.flashcardError = '';
         } catch (error) {
-            cards = [];
+            cards = flashcards();
             state.flashcardError = error.message;
         }
     }
@@ -906,13 +912,19 @@ async function renderFlashcards() {
     $('#flashcard-deck').innerHTML = filtered.length
         ? filtered.map(renderFlashcard).join('')
         : `<p class="muted">${escapeHtml(state.flashcardError || 'No flashcards match the current filters.')}</p>`;
+    const handoffUrl = safeHandoffUrl(store.sessionHandoffUrl);
+    if (state.flashcardError && handoffUrl) {
+        $('#flashcard-deck').insertAdjacentHTML('beforeend', '<p class="flashcard-auth-help"><a class="secondary" href="' + escapeHtml(handoffUrl) + '">Sign in to MPS</a></p>');
+    }
     await renderFlashcardEditor();
 }
 
 function renderFlashcard(card) {
     const slug = String(card.category || card.apparatus || 'flashcard').toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-    const artClass = card.image ? 'flashcard-art has-image' : 'flashcard-art';
-    const artStyle = card.image ? ` style="background-image: url('${safeAssetUrl(card.image)}')"` : '';
+    const catalogImage = card.catalog_image || (!card.status ? card.image : null);
+    const artImage = card.image || catalogImage;
+    const artClass = artImage ? 'flashcard-art has-image' : 'flashcard-art';
+    const artStyle = artImage ? ` style="background-image: url('${safeAssetUrl(artImage)}')"` : '';
     const status = card.status ? window.MPS_FLASHCARD_MODEL.statusLabel(card.status) : 'Catalog';
     const printRows = [
         ['Front', card.front],
@@ -957,11 +969,16 @@ async function createFlashcardDraft(cardId) {
     if (!sourceCard) return;
 
     if (store.isApiMode) {
-        const existing = listedCard || (state.flashcardLibrary || []).find((card) =>
-            card.source_exercise_id === (sourceCard.source_exercise_id || sourceCard.id)
-        );
+        const sourceId = sourceCard.source_exercise_id || sourceCard.api_source_exercise_id || sourceCard.id;
+        const existing = listedCard?.status
+            ? listedCard
+            : (state.flashcardLibrary || []).find((card) => card.status && (
+                card.source_exercise_id === sourceId || card.id === sourceCard.id
+            ));
         const draft = existing || await store.createDraft(sourceCard);
-        state.flashcardLibrary = (state.flashcardLibrary || []).filter((card) => card.id !== draft.id).concat(draft);
+        state.flashcardLibrary = (state.flashcardLibrary || [])
+            .filter((card) => card.id !== draft.id && card.id !== sourceCard.id && card.source_exercise_id !== sourceId)
+            .concat({ ...draft, catalog_image: sourceCard.catalog_image || sourceCard.image || null });
         state.selectedFlashcardId = draft.id;
         safeSelectedFlashcardWrite(draft.id);
         await renderFlashcards();
@@ -1095,9 +1112,18 @@ function applyJobToCard(card, job) {
         code: 'job_failed',
         message: job.error
     }];
-    return card?.id && state.flashcardJobFindings[card.id]
-        ? { ...card, review_findings: state.flashcardJobFindings[card.id] }
-        : card;
+    if (!card) return card;
+    const next = { ...card };
+    if (job?.asset) {
+        next.asset = job.asset;
+        next.image = job.asset.url || next.image;
+    }
+    if (job?.automated_review) {
+        next.automated_review = job.automated_review;
+    }
+    return state.flashcardJobFindings[card.id]
+        ? { ...next, review_findings: state.flashcardJobFindings[card.id] }
+        : next;
 }
 
 function renderFlashcardEditorForm(card) {
@@ -1128,7 +1154,7 @@ function renderFlashcardEditorForm(card) {
     return '<div class="flashcard-editor-head"><div><p class="eyebrow">Teacher review queue</p><h3>' +
         escapeHtml(card.name) + '</h3></div><span class="flashcard-status">' + escapeHtml(status) +
         '</span></div><p class="flashcard-proposal-note">Generated values remain proposals until you explicitly save them. ' +
-        (apiMode ? 'MPS API state is authoritative; publishing is a teacher action.' : 'Static demo mode keeps publication disabled.') + '</p>' +
+        (apiMode ? 'MPS API state is authoritative; the visual worker moves completed jobs into review.' : 'Static demo mode keeps publication disabled.') + '</p>' +
         '<form id="flashcard-editor-form" class="flashcard-editor-form"><section class="flashcard-editor-section"><h4>Workbook source · locked</h4>' +
         '<dl class="locked-fields"><div><dt>Exercise</dt><dd>' + escapeHtml(card.name) + '</dd></div><div><dt>Apparatus</dt><dd>' +
         escapeHtml(card.apparatus || card.category) + '</dd></div><div><dt>Level</dt><dd>' + escapeHtml(card.level) + '</dd></div><div><dt>Objective</dt><dd>' +
@@ -1147,8 +1173,9 @@ function renderFlashcardEditorForm(card) {
         disabled(!['draft', 'revision-requested'].includes(card.status) || (apiMode && !briefId)) + ' title="' + escapeHtml(apiMode && !briefId ? 'Paste a visual brief ID from ChatGPT first' : '') + '">Generate</button><button class="secondary" type="button" data-flashcard-action="generate"' +
         disabled(!apiMode || card.status !== 'revision-requested' || !briefId) + '>Regenerate</button><button class="secondary" type="button" data-flashcard-action="show-findings"' +
         disabled(!card.review_findings?.length) + '>Show findings</button><button class="secondary" type="button" data-flashcard-action="request-revision"' +
-        disabled(apiMode || !['needs-review', 'approved'].includes(card.status)) + ' title="' + escapeHtml(apiMode ? 'The current API has no browser revision route' : '') + '">Request revision</button><button class="secondary" type="button" data-flashcard-action="submit-review"' +
-        disabled(card.status !== 'generating') + '>Submit review</button><button class="secondary" type="button" data-flashcard-action="approve"' +
+        disabled(apiMode || !['needs-review', 'approved'].includes(card.status)) + ' title="' + escapeHtml(apiMode ? 'The current API has no browser revision route' : '') + '">Request revision</button>' +
+        (apiMode ? '' : '<button class="secondary" type="button" data-flashcard-action="submit-review"' +
+        disabled(!window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).canSubmitReview(card, false)) + '>Submit review</button>') + '<button class="secondary" type="button" data-flashcard-action="approve"' +
         disabled(!canApprove) + '>Approve</button><button class="secondary" type="button" data-flashcard-action="publish"' +
         disabled(!canPublish) + '>Publish</button></div><section id="flashcard-findings" class="flashcard-findings"><h5>Validation findings</h5>' + reviewFindings(card) + '</section>' +
         '<p class="muted">Publish guard: ' + (canPublish ? 'ready for an authorized publisher' : 'not eligible') +
@@ -1211,8 +1238,6 @@ async function applyFlashcardAction(action) {
                 const completed = await store.pollJob(card.id, job.id);
                 updated = applyJobToCard(await store.getCard(card.id), completed) || card;
                 state.flashcardLibrary = (state.flashcardLibrary || []).map((item) => item.id === updated.id ? updated : item);
-            } else if (action === 'submit-review') {
-                updated = await store.submitReview(card.id);
             } else if (action === 'approve') {
                 updated = await store.approve(card.id, { findings: card.review_findings || [] });
             } else if (action === 'publish') {

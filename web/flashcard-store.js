@@ -45,6 +45,18 @@
         }[character]));
     }
 
+    function resolveAssetUrl(value, apiBase) {
+        if (!value) return null;
+        const url = String(value);
+        if (/^https?:\/\//i.test(url) || !apiBase) return url;
+        if (url.startsWith('/')) return `${String(apiBase).replace(/\/$/, '')}${url}`;
+        try {
+            return new URL(url, `${apiBase}/`).toString();
+        } catch (error) {
+            return null;
+        }
+    }
+
     function renderFindings(value) {
         const findings = normalizeFindings(value);
         if (!findings.length) return '<p class="muted">No validation findings returned yet.</p>';
@@ -58,13 +70,14 @@
         return card?.status === 'approved';
     }
 
-    function normalizeCard(payload) {
+    function normalizeCard(payload, apiBase = '') {
         if (!payload) return null;
         const card = payload.card || payload;
         const copy = jsonObject(card.teaching_copy_json || card.teachingCopy);
-        const review = card.automated_review || card.latest_review || {};
+        const asset = jsonObject(card.asset || card.generated_asset);
+        const review = card.automated_review || card.latest_automated_review || card.latest_review || {};
         const findings = normalizeFindings(
-            card.review_findings || card.findings || card.findings_json || review.findings
+            card.review_findings || card.findings || card.findings_json || review.findings || review.findings_json
         );
         return {
             ...copy,
@@ -72,24 +85,83 @@
             teaching_copy_json: copy,
             automated_review: card.automated_review || (review.status ? {
                 ...review,
-                findings
+                findings,
+                findings_json: findings
             } : undefined),
             review_findings: findings,
-            image: card.image || card.image_url || card.asset_url || null
+            asset: Object.keys(asset).length ? {
+                ...asset,
+                url: resolveAssetUrl(asset.url || asset.image_url, apiBase)
+            } : null,
+            image: resolveAssetUrl(
+                card.image || card.image_url || card.asset_url || asset.url || asset.image_url,
+                apiBase
+            )
         };
     }
 
-    function normalizeJob(payload) {
+    function normalizeJob(payload, apiBase = '') {
         if (!payload) return null;
         const job = payload.job || payload;
         const output = jsonObject(job.output_json || job.output);
+        const asset = jsonObject(job.asset || output.asset || output.generated_asset);
+        const review = job.automated_review || output.automated_review || output.review || {};
         return {
             ...job,
             output_json: output,
+            asset: Object.keys(asset).length ? {
+                ...asset,
+                url: resolveAssetUrl(asset.url || asset.image_url, apiBase)
+            } : null,
+            automated_review: review.status ? {
+                ...review,
+                findings: normalizeFindings(review.findings || review.findings_json)
+            } : null,
             review_findings: normalizeFindings(
-                job.review_findings || job.findings || output.findings || output.review?.findings
+                job.review_findings || job.findings || review.findings || review.findings_json || output.findings || output.review?.findings
             )
         };
+    }
+
+    function catalogIdentity(card) {
+        return card?.source_exercise_id || card?.api_source_exercise_id || card?.id || '';
+    }
+
+    function sameCatalogCard(catalogCard, persistedCard) {
+        const catalogId = catalogIdentity(catalogCard);
+        const persistedId = catalogIdentity(persistedCard);
+        if (catalogId && catalogId === persistedId) return true;
+        if (catalogCard?.id && catalogCard.id === persistedCard?.id) return true;
+        return String(catalogCard?.name || '').trim().toLowerCase() === String(persistedCard?.name || '').trim().toLowerCase()
+            && String(catalogCard?.category || catalogCard?.apparatus || '').trim().toLowerCase()
+                === String(persistedCard?.category || persistedCard?.apparatus || '').trim().toLowerCase();
+    }
+
+    function mergeCatalogCards(catalog, persisted, apiBase = '') {
+        const staticCards = Array.isArray(catalog) ? catalog : [];
+        const apiCards = Array.isArray(persisted) ? persisted : [];
+        const matched = new Set();
+        const merged = staticCards.map((catalogCard) => {
+            const index = apiCards.findIndex((persistedCard, candidateIndex) => {
+                return !matched.has(candidateIndex) && sameCatalogCard(catalogCard, persistedCard);
+            });
+            if (index < 0) {
+                return {
+                    ...catalogCard,
+                    catalog_image: catalogCard.image || null,
+                    source_exercise_id: catalogCard.source_exercise_id || catalogCard.api_source_exercise_id || null
+                };
+            }
+            matched.add(index);
+            const persistedCard = normalizeCard(apiCards[index], apiBase);
+            return {
+                ...catalogCard,
+                ...persistedCard,
+                catalog_image: catalogCard.image || null,
+                source_exercise_id: persistedCard.source_exercise_id || catalogCard.source_exercise_id || catalogCard.id
+            };
+        });
+        return merged.concat(apiCards.filter((_, index) => !matched.has(index)));
     }
 
     function teachingCopy(card) {
@@ -100,8 +172,8 @@
         return copy;
     }
 
-    function responseBody(body) {
-        return body?.card ? normalizeCard(body.card) : body;
+    function responseBody(body, apiBase = '') {
+        return body?.card ? normalizeCard(body.card, apiBase) : body;
     }
 
     window.MPS_FLASHCARD_STORE = function createFlashcardStore({
@@ -131,8 +203,11 @@
                 if (response.status !== 204) body = null;
             }
             if (!response.ok) {
+                const message = response.status === 401
+                    ? 'MPS session is missing or expired. Sign in through the configured BFF before using the MPS API.'
+                    : body?.error?.message || `MPS API request failed: ${response.status}`;
                 throw new MpsApiError(
-                    body?.error?.message || `MPS API request failed: ${response.status}`,
+                    message,
                     response.status,
                     body
                 );
@@ -146,13 +221,13 @@
                 Object.entries(filters).filter(([, value]) => value !== undefined && value !== '' && value !== 'all')
             ).toString();
             const body = await request(query ? `/api/flashcards?${query}` : '/api/flashcards');
-            return (Array.isArray(body) ? body : body?.cards || []).map(normalizeCard);
+            return (Array.isArray(body) ? body : body?.cards || []).map((card) => normalizeCard(card, base));
         }
 
         async function getCard(id) {
             if (!isApiMode) return JSON.parse(storage.getItem(`mps.flashcard.${id}`) || 'null');
             try {
-                return normalizeCard(await request(`/api/flashcards/${encodeURIComponent(id)}`));
+                return normalizeCard(await request(`/api/flashcards/${encodeURIComponent(id)}`), base);
             } catch (error) {
                 if (error.status === 404) return null;
                 throw error;
@@ -170,11 +245,11 @@
                     category: card.category,
                     teaching_copy_json: teachingCopy(card)
                 })
-            }));
+            }), base);
         }
 
         async function createDraft(source, fields = {}) {
-            const sourceId = source?.source_exercise_id || source?.id;
+            const sourceId = source?.source_exercise_id || source?.api_source_exercise_id || source?.id;
             if (!sourceId) throw new Error('A canonical source exercise is required');
             if (!isApiMode) {
                 const draft = {
@@ -191,7 +266,7 @@
                     category: fields.category || source.category,
                     teaching_copy_json: teachingCopy({ ...source, ...fields })
                 })
-            }));
+            }), base);
         }
 
         async function createVisualBrief(cardId, brief) {
@@ -199,7 +274,7 @@
             return responseBody(await request(`/api/flashcards/${encodeURIComponent(cardId)}/visual-briefs`, {
                 method: 'POST',
                 body: JSON.stringify(brief)
-            }));
+            }), base);
         }
 
         async function createJob(cardId, { kind = 'generate', briefId, revisionNotes } = {}) {
@@ -211,14 +286,14 @@
                     ...(briefId ? { brief_id: briefId } : {}),
                     ...(revisionNotes ? { revision_notes: revisionNotes } : {})
                 })
-            }));
+            }), base);
         }
 
         async function getJob(cardId, jobId) {
             if (!isApiMode) return null;
             return normalizeJob(await request(
                 `/api/flashcards/${encodeURIComponent(cardId)}/jobs/${encodeURIComponent(jobId)}`
-            ));
+            ), base);
         }
 
         async function pollJob(cardId, jobId, { intervalMs = 1500, maxAttempts = 40 } = {}) {
@@ -232,11 +307,18 @@
             throw new Error('Generation is still running; refresh this card to continue polling');
         }
 
-        async function submitReview(cardId) {
+        async function submitReview(cardId, card) {
             if (!isApiMode) throw new Error('Submit review is only available in API mode');
+            if (card?.status === 'generating') {
+                throw new Error('Wait for the visual worker to finish before submitting review');
+            }
             return responseBody(await request(`/api/flashcards/${encodeURIComponent(cardId)}/submit-review`, {
                 method: 'POST'
-            }));
+            }), base);
+        }
+
+        function canSubmitReview(card, apiMode = isApiMode) {
+            return !apiMode && card?.status === 'generating';
         }
 
         async function approve(cardId, { reviewId, findings = [] } = {}) {
@@ -247,19 +329,20 @@
                     review_id: reviewId || `teacher-review-${Date.now()}`,
                     findings_json: normalizeFindings(findings)
                 })
-            }));
+            }), base);
         }
 
         async function publish(cardId) {
             if (!isApiMode) throw new Error('Publishing requires the MPS API');
             return responseBody(await request(`/api/flashcards/${encodeURIComponent(cardId)}/publish`, {
                 method: 'POST'
-            }));
+            }), base);
         }
 
         return {
             apiBase: base,
             isApiMode,
+            sessionHandoffUrl: String(window.MPS_SESSION_HANDOFF_URL || '').trim(),
             listCards,
             getCard,
             saveDraft,
@@ -271,11 +354,13 @@
             submitReview,
             approve,
             publish,
-            normalizeCard,
-            normalizeJob,
+            normalizeCard: (payload) => normalizeCard(payload, base),
+            normalizeJob: (payload) => normalizeJob(payload, base),
             normalizeFindings,
             renderFindings,
-            canPublish
+            canPublish,
+            canSubmitReview,
+            mergeCatalogCards: (catalog, persisted) => mergeCatalogCards(catalog, persisted, base)
         };
     };
 }());

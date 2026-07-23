@@ -22,8 +22,47 @@ static demo with local drafts; that mode cannot publish a real card.
 
 Set `window.MPS_API_BASE` before the application scripts load (the default in
 `web/index.html` is an empty string). A same-origin deployment can leave it
-empty only when the API is mounted at the PWA origin; a separate API origin
-must be written as its HTTPS base URL and configured for browser credentials.
+empty only when the API is mounted at the PWA origin; same-origin transport is
+not authentication. The browser must first receive the `mps_session` HttpOnly
+cookie from the server-side handoff described below. A separate API origin
+must be written as its HTTPS base URL and configured for browser credentials,
+cookie scope, SameSite policy, and the required CORS allowlist.
+
+### Browser session and BFF boundary
+
+`MPS_AUTH_TOKEN` is a server-only secret. Never put it in `web/index.html`,
+`window.MPS_*`, browser storage, or an image-generation request. The Rust API
+accepts that bearer only from trusted server-side callers. A browser caller is
+authenticated by the short-lived `mps_session` cookie, which is HttpOnly,
+SameSite=Lax, Secure in production, and expires after 30 minutes. The token is
+kept in the API process and is not returned in JSON.
+
+The deployment must provide a small trusted BFF/auth handoff endpoint. Its
+contract is:
+
+1. Authenticate the teacher with the organization's login/OAuth provider.
+2. From the BFF server, call `POST /api/session` with
+   `Authorization: Bearer $MPS_AUTH_TOKEN`.
+3. Relay the API `Set-Cookie: mps_session=...` response to the teacher's
+   browser, then redirect to the PWA. Do not relay or expose the bearer.
+4. The PWA calls the API with `credentials: include`. If the cookie is absent
+   or expired, the API returns 401 and the PWA shows the configured
+   `window.MPS_SESSION_HANDOFF_URL` sign-in link instead of pretending the
+   request is authenticated.
+
+The repository does not invent or host the organization's teacher login. Set
+`MPS_SESSION_COOKIE_SECURE=false` only for local HTTP development. Set
+`MPS_ASSET_ROOT` on the API/worker deployment to the private root containing
+the allowlisted generated object keys; the browser receives only an
+authenticated `/api/flashcards/:id/assets/:asset_id` URL, never a filesystem
+path, provider job ID, or object URI.
+
+The session store is intentionally in-memory for this MVP. A multi-instance
+deployment must use sticky routing or replace it with a shared encrypted
+session store before scaling the API horizontally. This is the concrete
+deployment boundary: without the BFF handoff (or an equivalent trusted
+server-side session issuer), API mode fails clearly with 401 and cannot create
+or publish cards.
 
 ## Connect the Custom App in ChatGPT
 
@@ -36,8 +75,9 @@ must be written as its HTTPS base URL and configured for browser credentials.
    publishes protected-resource metadata and does not receive a browser-side
    client secret.
 4. Grant only the scopes needed for the current task. Drafting normally needs
-   `read_catalog` and `write_draft`; generation needs `generate_asset`; review
-   submission needs `submit_review`.
+   `read_catalog` and `write_draft`; generation needs `generate_asset`; a
+   completed, non-active review transition may use `submit_review`. A queued
+   or running generation job must be completed by the visual worker first.
 
 For the current ChatGPT Apps SDK authentication model, see the official
 [Apps SDK authentication guide](https://developers.openai.com/apps-sdk/build/auth)
@@ -109,12 +149,14 @@ mode, ask ChatGPT/MCP to revise or regenerate the brief, then refresh the card
 and use the returned brief ID for a new generation. The PWA does not fake a
 revision status by editing local browser state around the server.
 
-### 7. Submit review, approve, and publish
+### 7. Review, approve, and publish
 
-Select **Submit review** after the generated job is complete. The API records
-the `needs-review` transition. The server checks the latest automated review,
-current asset, locked visual contract, and canonical source before accepting
-**Approve**.
+When the worker finishes a generation job, the API records the asset and latest
+automated findings and transitions the card from `generating` to
+`needs-review`. The API and PWA do not allow **Submit review** while a
+generation job is queued or running; worker completion is the valid transition
+into review. The server checks the latest automated review, current asset,
+locked visual contract, and canonical source before accepting **Approve**.
 
 **Publish** stays disabled until the API reports `approved`. The server performs
 the final checks again when the teacher publishes, so a stale browser tab cannot
@@ -124,9 +166,11 @@ publish an outdated asset. ChatGPT/MCP has no approve or publish tool.
 
 | Symptom | What to do |
 | --- | --- |
-| The library is empty in API mode | Confirm the API session is authenticated and that the teacher has catalog permission. |
+| API mode says the MPS session is missing or expired | Use the configured BFF sign-in link. Confirm the BFF, not the browser, performs the bearer handoff. Same-origin hosting alone does not authenticate a teacher. |
+| The library is empty in API mode | Confirm the API session is authenticated and that the teacher has catalog permission. The canonical workbook catalog is still shown while persisted cards are loading. |
 | Generate is disabled | Paste the visual brief ID returned by ChatGPT, then refresh the card if the API has not returned the brief yet. |
 | The job remains running | Leave the card open until polling ends, then refresh. Do not start a second job for the same version. |
+| Submit review is unavailable | This is expected while a generation job is queued or running. Wait for worker completion; it creates the `needs-review` state. |
 | Findings reject the image | Ask ChatGPT to revise the brief against the exact failed checks; do not alter the locked style or character fields. |
 | Publish is disabled | Confirm the API status is `approved` and that the latest asset has passed automated and teacher review. |
 | Static mode cannot publish | This is intentional. Configure `MPS_API_BASE` and use the authenticated MPS API for real publication. |

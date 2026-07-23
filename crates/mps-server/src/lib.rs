@@ -1,19 +1,22 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context};
+use axum::body::Body;
 use axum::extract::{FromRequestParts, Path, Query, State};
-use axum::http::{request::Parts, StatusCode};
+use axum::http::{header, request::Parts, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{async_trait, Json, Router};
 use mps_db::{
     AuditActorKind, FlashcardAsset, FlashcardAssetStatus, FlashcardJob, FlashcardJobKind,
     FlashcardJobStatus, FlashcardListFilter, FlashcardPatch, FlashcardRepository,
-    FlashcardReview, FlashcardWorkerCompletion, ReviewerKind,
+    FlashcardReview, FlashcardVisualDetails, FlashcardWorkerCompletion, ReviewerKind,
 };
 use mps_flashcards::{
     CanonicalCatalog, CatalogExercise, FlashcardCard, FlashcardStatus, VisualBrief,
@@ -52,6 +55,51 @@ const WORKER_QA_CHECKS: &[&str] = &[
 ];
 
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+pub const BROWSER_SESSION_COOKIE: &str = "mps_session";
+pub const BROWSER_SESSION_TTL_SECONDS: u64 = 30 * 60;
+
+#[derive(Clone, Default)]
+pub struct BrowserSessionStore {
+    sessions: Arc<Mutex<HashMap<String, BrowserSession>>>,
+}
+
+#[derive(Clone)]
+struct BrowserSession {
+    context: AuthContext,
+    expires_at: SystemTime,
+}
+
+impl BrowserSessionStore {
+    pub fn issue(&self, context: AuthContext) -> anyhow::Result<String> {
+        let mut bytes = [0_u8; 32];
+        getrandom::getrandom(&mut bytes).context("generate browser session token")?;
+        let token = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let expires_at = SystemTime::now() + Duration::from_secs(BROWSER_SESSION_TTL_SECONDS);
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| anyhow!("browser session store is unavailable"))?;
+        sessions.retain(|_, session| session.expires_at > SystemTime::now());
+        sessions.insert(token.clone(), BrowserSession { context, expires_at });
+        Ok(token)
+    }
+
+    pub fn authenticate(&self, token: &str) -> Option<AuthContext> {
+        let mut sessions = self.sessions.lock().ok()?;
+        let session = sessions.get(token).cloned()?;
+        if session.expires_at <= SystemTime::now() {
+            sessions.remove(token);
+            return None;
+        }
+        Some(session.context)
+    }
+
+    pub fn revoke(&self, token: &str) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.remove(token);
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct AuthContext {
@@ -152,6 +200,9 @@ pub struct AppState {
     visual_contract: Arc<Value>,
     character_reference: Arc<Value>,
     publication_references_approved: bool,
+    browser_sessions: BrowserSessionStore,
+    asset_root: Option<Arc<PathBuf>>,
+    session_cookie_secure: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -160,6 +211,8 @@ pub struct ServerConfig {
     pub catalog_path: String,
     pub visual_styles_path: String,
     pub visual_manifest_path: String,
+    pub asset_root: Option<String>,
+    pub session_cookie_secure: bool,
 }
 
 impl AppState {
@@ -173,12 +226,15 @@ impl AppState {
             .with_context(|| format!("read visual manifest {}", config.visual_manifest_path))?;
         let catalog = CanonicalCatalog::load_json(&catalog_json)?;
         let repository = FlashcardRepository::open(&config.database_path, catalog.clone())?;
-        Self::from_documents(
+        let state = Self::from_documents(
             repository,
             catalog,
             &visual_styles_json,
             &visual_manifest_json,
-        )
+        )?;
+        Ok(state
+            .with_asset_root(config.asset_root.as_deref())
+            .with_session_cookie_secure(config.session_cookie_secure))
     }
 
     pub fn from_documents(
@@ -197,12 +253,41 @@ impl AppState {
             visual_contract: Arc::new(visual_contract),
             character_reference: Arc::new(character_reference),
             publication_references_approved: style_approved && character_approved,
+            browser_sessions: BrowserSessionStore::default(),
+            asset_root: None,
+            session_cookie_secure: true,
         })
+    }
+
+    pub fn with_asset_root(mut self, root: Option<&str>) -> Self {
+        self.asset_root = root
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| Arc::new(PathBuf::from(value)));
+        self
+    }
+
+    pub fn with_session_cookie_secure(mut self, secure: bool) -> Self {
+        self.session_cookie_secure = secure;
+        self
+    }
+
+    pub fn browser_session_store(&self) -> BrowserSessionStore {
+        self.browser_sessions.clone()
+    }
+
+    pub fn session_cookie_secure(&self) -> bool {
+        self.session_cookie_secure
     }
 }
 
 pub fn app(state: AppState) -> Router {
     Router::new()
+        .route(
+            "/api/session",
+            get(session_status)
+                .post(create_browser_session)
+                .delete(clear_browser_session),
+        )
         .route("/api/flashcards", get(list_flashcards).post(create_flashcard))
         .route(
             "/api/catalog/exercises/:exercise_id/context",
@@ -224,6 +309,10 @@ pub fn app(state: AppState) -> Router {
             get(get_flashcard_job),
         )
         .route(
+            "/api/flashcards/:id/assets/:asset_id",
+            get(get_flashcard_asset),
+        )
+        .route(
             "/api/internal/flashcards/:id/jobs/:job_id/claim",
             post(claim_visual_job),
         )
@@ -239,6 +328,78 @@ pub fn app(state: AppState) -> Router {
         .route("/api/flashcards/:id/approve", post(approve_flashcard))
         .route("/api/flashcards/:id/publish", post(publish_flashcard))
         .with_state(state)
+}
+
+#[derive(Debug, Serialize)]
+struct SessionResponse {
+    authenticated: bool,
+    studio_id: String,
+    teacher_id: String,
+    expires_in_seconds: u64,
+}
+
+async fn create_browser_session(
+    State(state): State<AppState>,
+    auth: AuthContext,
+) -> Result<Response, ApiError> {
+    let token = state
+        .browser_sessions
+        .issue(auth)
+        .map_err(|_| ApiError::internal())?;
+    Ok((
+        StatusCode::NO_CONTENT,
+        [(header::SET_COOKIE, session_cookie(&token, state.session_cookie_secure))],
+    )
+        .into_response())
+}
+
+async fn session_status(auth: AuthContext) -> Result<Json<SessionResponse>, ApiError> {
+    Ok(Json(SessionResponse {
+        authenticated: true,
+        studio_id: auth.studio_id,
+        teacher_id: auth.teacher_id,
+        expires_in_seconds: BROWSER_SESSION_TTL_SECONDS,
+    }))
+}
+
+async fn clear_browser_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(token) = session_token_from_cookie(&headers) {
+        state.browser_sessions.revoke(&token);
+    }
+    Ok((
+        StatusCode::NO_CONTENT,
+        [(header::SET_COOKIE, clear_session_cookie(state.session_cookie_secure))],
+    )
+        .into_response())
+}
+
+pub fn session_token_from_cookie(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value.split(';').find_map(|pair| {
+                let (name, token) = pair.trim().split_once('=')?;
+                (name == BROWSER_SESSION_COOKIE && !token.is_empty()).then(|| token.to_owned())
+            })
+        })
+}
+
+pub fn session_cookie(token: &str, secure: bool) -> String {
+    format!(
+        "{BROWSER_SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={BROWSER_SESSION_TTL_SECONDS}{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+fn clear_session_cookie(secure: bool) -> String {
+    format!(
+        "{BROWSER_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        if secure { "; Secure" } else { "" }
+    )
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -261,8 +422,26 @@ struct FlashcardResponse {
     style_profile: String,
     character_id: String,
     current_asset_id: Option<String>,
+    asset: Option<AssetResponse>,
+    automated_review: Option<AutomatedReviewResponse>,
     version: i64,
     status: FlashcardStatus,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AssetResponse {
+    id: String,
+    version: i64,
+    status: &'static str,
+    url: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AutomatedReviewResponse {
+    id: String,
+    asset_id: String,
+    status: &'static str,
+    findings: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -373,6 +552,9 @@ struct JobResponse {
     kind: &'static str,
     status: &'static str,
     error: Option<String>,
+    output_json: Option<Value>,
+    asset: Option<AssetResponse>,
+    automated_review: Option<AutomatedReviewResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -573,43 +755,46 @@ async fn list_flashcards(
     Query(query): Query<ListFlashcardsQuery>,
 ) -> Result<Json<Vec<FlashcardResponse>>, ApiError> {
     auth.require(READ_CATALOG)?;
-    let studio_id = auth.studio_id;
+    let studio_id = auth.studio_id.clone();
+    let list_studio_id = studio_id.clone();
     let filter = FlashcardListFilter {
         status: query.status,
         category: query.category,
     };
     let cards = run_repository(state.repository.clone(), move |repository| {
-        repository.list_flashcards_for_studio(&studio_id, filter)
+        repository.list_flashcards_for_studio(&list_studio_id, filter)
     })
     .await?;
     let query_text = query.query.unwrap_or_default().trim().to_lowercase();
     let level = query.level.unwrap_or_default().trim().to_lowercase();
-    let responses = cards
-        .into_iter()
-        .filter_map(|card| {
-            let exercise = state.catalog.find(&card.source_exercise_id)?;
-            let response = flashcard_response(card, exercise);
-            let searchable = format!(
-                "{} {} {} {} {} {} {}",
-                response.id,
-                response.source_exercise_id,
-                response.name,
-                response.apparatus,
-                response.level.as_deref().unwrap_or_default(),
-                response.category,
-                response.teaching_copy_json
-            )
-            .to_lowercase();
-            let matches_query = query_text.is_empty() || searchable.contains(&query_text);
-            let matches_level = level.is_empty()
-                || level == "all"
-                || response
-                    .level
-                    .as_deref()
-                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&level));
-            (matches_query && matches_level).then_some(response)
-        })
-        .collect();
+    let mut responses = Vec::new();
+    for card in cards {
+        let Some(exercise) = state.catalog.find(&card.source_exercise_id) else {
+            continue;
+        };
+        let response = flashcard_response_for_studio(&state, &studio_id, card, exercise).await?;
+        let searchable = format!(
+            "{} {} {} {} {} {} {}",
+            response.id,
+            response.source_exercise_id,
+            response.name,
+            response.apparatus,
+            response.level.as_deref().unwrap_or_default(),
+            response.category,
+            response.teaching_copy_json
+        )
+        .to_lowercase();
+        let matches_query = query_text.is_empty() || searchable.contains(&query_text);
+        let matches_level = level.is_empty()
+            || level == "all"
+            || response
+                .level
+                .as_deref()
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&level));
+        if matches_query && matches_level {
+            responses.push(response);
+        }
+    }
     Ok(Json(responses))
 }
 
@@ -677,9 +862,10 @@ async fn get_flashcard(
 ) -> Result<Json<FlashcardResponse>, ApiError> {
     auth.require(READ_CATALOG)?;
     let studio_id = auth.studio_id;
+    let lookup_studio_id = studio_id.clone();
     let requested_id = id.clone();
     let card = run_repository(state.repository.clone(), move |repository| {
-        repository.get_flashcard_for_studio(&studio_id, &requested_id)
+        repository.get_flashcard_for_studio(&lookup_studio_id, &requested_id)
     })
     .await?
     .ok_or_else(|| ApiError::not_found("flashcard not found"))?;
@@ -687,7 +873,9 @@ async fn get_flashcard(
         .catalog
         .find(&card.source_exercise_id)
         .ok_or_else(|| ApiError::conflict("flashcard source is no longer canonical"))?;
-    Ok(Json(flashcard_response(card, exercise)))
+    Ok(Json(
+        flashcard_response_for_studio(&state, &studio_id, card, exercise).await?,
+    ))
 }
 
 async fn create_flashcard(
@@ -716,15 +904,18 @@ async fn create_flashcard(
         status: FlashcardStatus::Draft,
     };
     let studio_id = auth.studio_id;
+    let write_studio_id = studio_id.clone();
     let teacher_id = auth.teacher_id;
     let actor_kind = auth.actor_kind;
     let created = run_repository(state.repository.clone(), move |repository| {
-        repository.create_flashcard_for_actor(&studio_id, &teacher_id, actor_kind, &card)
+        repository.create_flashcard_for_actor(&write_studio_id, &teacher_id, actor_kind, &card)
     })
     .await?;
     Ok((
         StatusCode::CREATED,
-        Json(flashcard_response(created, &exercise)),
+        Json(
+            flashcard_response_for_studio(&state, &studio_id, created, &exercise).await?,
+        ),
     ))
 }
 
@@ -745,17 +936,20 @@ async fn update_flashcard(
         teaching_copy_json: request.teaching_copy_json,
     };
     let studio_id = auth.studio_id;
+    let write_studio_id = studio_id.clone();
     let teacher_id = auth.teacher_id;
     let actor_kind = auth.actor_kind;
     let updated = run_repository(state.repository.clone(), move |repository| {
-        repository.update_flashcard_for_actor(&studio_id, &teacher_id, actor_kind, &id, patch)
+        repository.update_flashcard_for_actor(&write_studio_id, &teacher_id, actor_kind, &id, patch)
     })
     .await?;
     let exercise = state
         .catalog
         .find(&updated.source_exercise_id)
         .ok_or_else(|| ApiError::conflict("flashcard source is no longer canonical"))?;
-    Ok(Json(flashcard_response(updated, exercise)))
+    Ok(Json(
+        flashcard_response_for_studio(&state, &studio_id, updated, exercise).await?,
+    ))
 }
 
 async fn create_visual_brief(
@@ -865,12 +1059,55 @@ async fn get_flashcard_job(
 ) -> Result<Json<JobResponse>, ApiError> {
     auth.require_any(&[GENERATE_ASSET, SUBMIT_REVIEW])?;
     let studio_id = auth.studio_id;
+    let lookup_studio_id = studio_id.clone();
+    let lookup_card_id = id.clone();
+    let lookup_job_id = job_id.clone();
     let job = run_repository(state.repository.clone(), move |repository| {
-        repository.get_job_for_studio(&studio_id, &id, &job_id)
+        repository.get_job_for_studio(&lookup_studio_id, &lookup_card_id, &lookup_job_id)
     })
     .await?
     .ok_or_else(|| ApiError::not_found("flashcard job not found"))?;
-    Ok(Json(job_response(job)))
+    Ok(Json(job_response_for_studio(&state, &studio_id, job).await?))
+}
+
+async fn get_flashcard_asset(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((card_id, asset_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    auth.require(READ_CATALOG)?;
+    let studio_id = auth.studio_id.clone();
+    let lookup_card_id = card_id.clone();
+    let lookup_asset_id = asset_id.clone();
+    let asset = run_repository(state.repository.clone(), move |repository| {
+        repository.asset_for_studio(&studio_id, &lookup_card_id, &lookup_asset_id)
+    })
+    .await?
+    .ok_or_else(|| ApiError::not_found("flashcard asset not found"))?;
+    let key = safe_asset_key(&asset.repo_path)
+        .ok_or_else(|| ApiError::not_found("flashcard asset is not publicly available"))?;
+    let root = state
+        .asset_root
+        .as_ref()
+        .ok_or_else(|| ApiError::not_found("flashcard asset storage is not configured"))?;
+    let root = fs::canonicalize(root.as_ref())
+        .map_err(|_| ApiError::not_found("flashcard asset storage is not available"))?;
+    let candidate = fs::canonicalize(root.join(&key))
+        .map_err(|_| ApiError::not_found("flashcard asset is not available"))?;
+    if !candidate.starts_with(&root) {
+        return Err(ApiError::not_found("flashcard asset is not available"));
+    }
+    let bytes = fs::read(candidate)
+        .map_err(|_| ApiError::not_found("flashcard asset is not available"))?;
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, asset_content_type(&key)),
+            (header::CACHE_CONTROL, "private, max-age=60"),
+        ],
+        Body::from(bytes),
+    )
+        .into_response())
 }
 
 async fn claim_visual_job(
@@ -884,7 +1121,7 @@ async fn claim_visual_job(
         return Err(ApiError::forbidden("visual worker service identity is required"));
     }
     validate_worker_claim_id(&request.claim_id)?;
-    let studio_id = auth.studio_id;
+    let studio_id = auth.studio_id.clone();
     let worker_id = auth.teacher_id;
     let claim_id = request.claim_id;
     let claimed = run_repository(state.repository.clone(), move |repository| {
@@ -911,7 +1148,7 @@ async fn complete_visual_job(
         return Err(ApiError::forbidden("visual worker service identity is required"));
     }
     let completion = request.into_completion(&card_id)?;
-    let studio_id = auth.studio_id;
+    let studio_id = auth.studio_id.clone();
     let worker_id = auth.teacher_id;
     let completed = run_repository(state.repository.clone(), move |repository| {
         repository.complete_job_for_worker(
@@ -923,7 +1160,9 @@ async fn complete_visual_job(
         )
     })
     .await?;
-    Ok(Json(job_response(completed)))
+    Ok(Json(
+        job_response_for_studio(&state, &auth.studio_id, completed).await?,
+    ))
 }
 
 async fn create_review(
@@ -944,9 +1183,10 @@ async fn create_review(
         reviewer_id: None,
     };
     let studio_id = auth.studio_id.clone();
+    let review_studio_id = studio_id.clone();
     let teacher_id = auth.teacher_id.clone();
     run_repository(state.repository.clone(), move |repository| {
-        repository.record_automated_review_for_studio(&studio_id, &teacher_id, &review)
+        repository.record_automated_review_for_studio(&review_studio_id, &teacher_id, &review)
     })
     .await?;
     let card = get_scoped_card(&state, &auth, &id).await?;
@@ -957,7 +1197,7 @@ async fn create_review(
     Ok((
         StatusCode::CREATED,
         Json(MutationResponse {
-            card: flashcard_response(card, exercise),
+            card: flashcard_response_for_studio(&state, &studio_id, card, exercise).await?,
         }),
     ))
 }
@@ -968,6 +1208,17 @@ async fn submit_review(
     Path(id): Path<String>,
 ) -> Result<Json<MutationResponse>, ApiError> {
     auth.require(SUBMIT_REVIEW)?;
+    let studio_id = auth.studio_id.clone();
+    let active_card_id = id.clone();
+    let active = run_repository(state.repository.clone(), move |repository| {
+        repository.has_active_generation_job_for_studio(&studio_id, &active_card_id)
+    })
+    .await?;
+    if active {
+        return Err(ApiError::conflict(
+            "cannot submit review while a generation job is active; worker completion submits it",
+        ));
+    }
     let studio_id = auth.studio_id.clone();
     let teacher_id = auth.teacher_id.clone();
     let actor_kind = auth.actor_kind.clone();
@@ -1047,13 +1298,14 @@ async fn mutation_response(
     auth: &AuthContext,
     id: &str,
 ) -> Result<Json<MutationResponse>, ApiError> {
+    let studio_id = auth.studio_id.clone();
     let card = get_scoped_card(state, auth, id).await?;
     let exercise = state
         .catalog
         .find(&card.source_exercise_id)
         .ok_or_else(|| ApiError::conflict("flashcard source is no longer canonical"))?;
     Ok(Json(MutationResponse {
-        card: flashcard_response(card, exercise),
+        card: flashcard_response_for_studio(&state, &studio_id, card, exercise).await?,
     }))
 }
 
@@ -1120,7 +1372,30 @@ fn require_publication_references(state: &AppState) -> Result<(), ApiError> {
     }
 }
 
-fn flashcard_response(card: FlashcardCard, exercise: &CatalogExercise) -> FlashcardResponse {
+async fn flashcard_response_for_studio(
+    state: &AppState,
+    studio_id: &str,
+    card: FlashcardCard,
+    exercise: &CatalogExercise,
+) -> Result<FlashcardResponse, ApiError> {
+    let card_id = card.id.clone();
+    let studio_id = studio_id.to_owned();
+    let details = run_repository(state.repository.clone(), move |repository| {
+        repository.visual_details_for_studio(&studio_id, &card_id)
+    })
+    .await?;
+    Ok(flashcard_response(card, exercise, &details))
+}
+
+fn flashcard_response(
+    card: FlashcardCard,
+    exercise: &CatalogExercise,
+    details: &FlashcardVisualDetails,
+) -> FlashcardResponse {
+    let asset = details
+        .asset
+        .as_ref()
+        .and_then(|asset| asset_response(&card.id, asset));
     FlashcardResponse {
         id: card.id,
         source_exercise_id: card.source_exercise_id,
@@ -1132,9 +1407,102 @@ fn flashcard_response(card: FlashcardCard, exercise: &CatalogExercise) -> Flashc
         style_profile: card.style_profile,
         character_id: card.character_id,
         current_asset_id: card.current_asset_id,
+        asset,
+        automated_review: details
+            .automated_review
+            .as_ref()
+            .map(automated_review_response),
         version: card.version,
         status: card.status,
     }
+}
+
+fn asset_response(card_id: &str, asset: &FlashcardAsset) -> Option<AssetResponse> {
+    safe_asset_key(&asset.repo_path)?;
+    Some(AssetResponse {
+        id: asset.id.clone(),
+        version: asset.version,
+        status: asset_status_label(&asset.status),
+        url: format!("/api/flashcards/{card_id}/assets/{}", asset.id),
+    })
+}
+
+fn automated_review_response(review: &FlashcardReview) -> AutomatedReviewResponse {
+    AutomatedReviewResponse {
+        id: review.id.clone(),
+        asset_id: review.asset_id.clone(),
+        status: if review.passed { "passed" } else { "failed" },
+        findings: sanitize_public_findings(&review.findings_json),
+    }
+}
+
+fn asset_status_label(status: &FlashcardAssetStatus) -> &'static str {
+    match status {
+        FlashcardAssetStatus::Generating => "generating",
+        FlashcardAssetStatus::NeedsReview => "needs-review",
+        FlashcardAssetStatus::Rejected => "rejected",
+        FlashcardAssetStatus::Approved => "approved",
+    }
+}
+
+fn safe_asset_key(repo_path: &str) -> Option<String> {
+    let key = repo_path
+        .strip_prefix("object://mps-flashcards/")
+        .or_else(|| repo_path.strip_prefix("web/assets/flashcard-images/"))
+        .or_else(|| repo_path.strip_prefix("assets/flashcard-images/"))?;
+    if key.is_empty()
+        || key.starts_with('/')
+        || key.contains('\\')
+        || key.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
+    {
+        return None;
+    }
+    let extension = key.rsplit('.').next()?.to_ascii_lowercase();
+    matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp").then(|| key.to_owned())
+}
+
+fn asset_content_type(key: &str) -> &'static str {
+    match key.rsplit('.').next().unwrap_or_default().to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        _ => "image/png",
+    }
+}
+
+fn sanitize_public_findings(value: &Value) -> Value {
+    let Some(findings) = value.as_array() else {
+        return json!([]);
+    };
+    Value::Array(
+        findings
+            .iter()
+            .take(128)
+            .filter_map(|finding| {
+                let object = finding.as_object()?;
+                let mut safe = serde_json::Map::new();
+                for key in ["code", "severity", "check", "message"] {
+                    let Some(value) = object.get(key) else {
+                        continue;
+                    };
+                    let Some(text) = value.as_str() else {
+                        continue;
+                    };
+                    let text = text
+                        .chars()
+                        .filter(|character| !character.is_control() || *character == '\n')
+                        .take(500)
+                        .collect::<String>();
+                    if !text.is_empty() {
+                        safe.insert(key.to_owned(), Value::String(text));
+                    }
+                }
+                (!safe.is_empty()).then_some(Value::Object(safe))
+            })
+            .collect(),
+    )
 }
 
 fn exercise_level(exercise: &CatalogExercise) -> Option<String> {
@@ -1178,7 +1546,33 @@ fn job_response(job: FlashcardJob) -> JobResponse {
             FlashcardJobStatus::Failed => "failed",
         },
         error: job.error,
+        output_json: job.output_json.map(sanitize_public_value),
+        asset: None,
+        automated_review: None,
     }
+}
+
+async fn job_response_for_studio(
+    state: &AppState,
+    studio_id: &str,
+    job: FlashcardJob,
+) -> Result<JobResponse, ApiError> {
+    let card_id = job.card_id.clone();
+    let studio_id = studio_id.to_owned();
+    let details = run_repository(state.repository.clone(), move |repository| {
+        repository.visual_details_for_studio(&studio_id, &card_id)
+    })
+    .await?;
+    let mut response = job_response(job);
+    response.asset = details
+        .asset
+        .as_ref()
+        .and_then(|asset| asset_response(&response.card_id, asset));
+    response.automated_review = details
+        .automated_review
+        .as_ref()
+        .map(automated_review_response);
+    Ok(response)
 }
 
 fn worker_claim_response(job: FlashcardJob) -> Result<Json<WorkerClaimResponse>, ApiError> {
@@ -1379,6 +1773,7 @@ fn looks_like_private_reference(value: &str) -> bool {
     let trimmed = value.trim();
     let lower = trimmed.to_ascii_lowercase();
     lower.starts_with("private://")
+        || lower.starts_with("object://")
         || lower.starts_with("file://")
         || lower.starts_with("http://")
         || lower.starts_with("https://")
@@ -1698,6 +2093,21 @@ mod routes {
     }
 
     #[test]
+    fn browser_session_is_opaque_http_only_and_revocable() {
+        let store = BrowserSessionStore::default();
+        let context = auth("studio-a");
+        let token = store.issue(context.clone()).expect("issue session");
+        assert_eq!(token.len(), 64);
+        assert_eq!(store.authenticate(&token).unwrap().studio_id, "studio-a");
+        let cookie = session_cookie(&token, true);
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("Secure"));
+        assert!(!cookie.contains("studio-a"));
+        store.revoke(&token);
+        assert!(store.authenticate(&token).is_none());
+    }
+
+    #[test]
     fn list_returns_only_cards_scoped_to_the_authenticated_studio() {
         let fixture = test_app();
         fixture
@@ -1747,6 +2157,152 @@ mod routes {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body.as_array().unwrap().len(), 1);
         assert_eq!(body[0]["id"], "card-teaser");
+    }
+
+    #[test]
+    fn card_and_job_responses_expose_only_sanitized_asset_and_latest_review() {
+        let fixture = test_app();
+        fixture
+            .repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-a"))
+            .unwrap();
+        fixture
+            .repository
+            .save_visual_brief_for_studio(
+                "studio-a",
+                "teacher-01",
+                &VisualBrief {
+                    id: "brief-a".into(),
+                    card_id: "card-a".into(),
+                    exercise_id: "source_chair_achilles_stretch_row_4".into(),
+                    style_profile: LOCKED_STYLE_PROFILE.into(),
+                    character_id: LOCKED_CHARACTER_ID.into(),
+                    outfit: LOCKED_OUTFIT.into(),
+                    pose_json: json!({"position": "standing"}),
+                    apparatus: "Chair".into(),
+                    palette_json: json!({"cheekAccent": DUSTY_ROSE_CHEEK_ACCENT}),
+                    must_show_json: json!([]),
+                    must_not_show_json: json!(["arrows"]),
+                    version: 1,
+                },
+            )
+            .unwrap();
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/flashcards/card-a/jobs",
+                auth("studio-a"),
+                Some(json!({"id": "job-a", "kind": "generate", "brief_id": "brief-a"})),
+            ),
+        );
+        assert_eq!(status, StatusCode::ACCEPTED);
+        fixture
+            .repository
+            .record_asset(&FlashcardAsset {
+                id: "asset-a".into(),
+                card_id: "card-a".into(),
+                brief_id: "brief-a".into(),
+                repo_path: "object://mps-flashcards/card-a-v1.png".into(),
+                provider_job_id: Some("provider-secret".into()),
+                version: 1,
+                status: FlashcardAssetStatus::NeedsReview,
+            })
+            .unwrap();
+        fixture
+            .repository
+            .record_review(&FlashcardReview {
+                id: "review-a".into(),
+                card_id: "card-a".into(),
+                asset_id: "asset-a".into(),
+                passed: false,
+                findings_json: json!([{"code": "visual_check_failed", "check": "pose", "message": "Pose needs work"}]),
+                reviewer_kind: ReviewerKind::Automated,
+                reviewer_id: None,
+            })
+            .unwrap();
+
+        let (status, body) = send(
+            &fixture.app,
+            request(Method::GET, "/api/flashcards/card-a", auth("studio-a"), None),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["asset"]["id"], "asset-a");
+        assert_eq!(body["asset"]["url"], "/api/flashcards/card-a/assets/asset-a");
+        assert!(body["asset"].get("repo_path").is_none());
+        assert!(body["asset"].get("provider_job_id").is_none());
+        assert_eq!(body["automated_review"]["status"], "failed");
+        assert_eq!(body["automated_review"]["findings"][0]["message"], "Pose needs work");
+
+        let (status, job) = send(
+            &fixture.app,
+            request(
+                Method::GET,
+                "/api/flashcards/card-a/jobs/job-a",
+                auth("studio-a"),
+                None,
+            ),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(job["asset"]["id"], "asset-a");
+        assert_eq!(job["automated_review"]["findings"][0]["check"], "pose");
+        assert!(serde_json::to_string(&job).unwrap().find("object://").is_none());
+    }
+
+    #[test]
+    fn submit_review_rejects_a_card_with_an_active_generation_job() {
+        let fixture = test_app();
+        fixture
+            .repository
+            .create_flashcard_for_studio("studio-a", "teacher-01", &card("card-a"))
+            .unwrap();
+        fixture
+            .repository
+            .save_visual_brief_for_studio(
+                "studio-a",
+                "teacher-01",
+                &VisualBrief {
+                    id: "brief-a".into(),
+                    card_id: "card-a".into(),
+                    exercise_id: "source_chair_achilles_stretch_row_4".into(),
+                    style_profile: LOCKED_STYLE_PROFILE.into(),
+                    character_id: LOCKED_CHARACTER_ID.into(),
+                    outfit: LOCKED_OUTFIT.into(),
+                    pose_json: json!({}),
+                    apparatus: "Chair".into(),
+                    palette_json: json!({"cheekAccent": DUSTY_ROSE_CHEEK_ACCENT}),
+                    must_show_json: json!([]),
+                    must_not_show_json: json!([]),
+                    version: 1,
+                },
+            )
+            .unwrap();
+        let (status, _) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/flashcards/card-a/jobs",
+                auth("studio-a"),
+                Some(json!({"id": "job-a", "kind": "generate", "brief_id": "brief-a"})),
+            ),
+        );
+        assert_eq!(status, StatusCode::ACCEPTED);
+
+        let (status, body) = send(
+            &fixture.app,
+            request(
+                Method::POST,
+                "/api/flashcards/card-a/submit-review",
+                auth("studio-a"),
+                None,
+            ),
+        );
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("generation job"));
+        assert_eq!(fixture.repository.get_flashcard("card-a").unwrap().unwrap().status, FlashcardStatus::Generating);
     }
 
     #[test]
@@ -2392,7 +2948,20 @@ mod routes {
                 None,
             ),
         );
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(fixture.repository.audit_event_count("card-a").unwrap(), audits);
+
+        // Worker completion owns generating -> needs-review. This direct transition
+        // keeps this audit-route test focused without duplicating the worker test.
+        fixture
+            .repository
+            .transition_status_for_studio(
+                "studio-a",
+                "teacher-01",
+                "card-a",
+                FlashcardStatus::NeedsReview,
+            )
+            .unwrap();
         audits += 1;
         assert_eq!(
             fixture.repository.audit_event_count("card-a").unwrap(),

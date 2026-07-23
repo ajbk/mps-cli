@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+getrandom.workspace = true
 mps-db = { path = "../mps-db" }
 mps-flashcards = { path = "../mps-flashcards" }
 serde.workspace = true
