@@ -142,9 +142,9 @@ mod tests {
         repository.transition_status("card-1", FlashcardStatus::Approved).unwrap();
 
         let error = repository
-            .transition_status("card-1", FlashcardStatus::Published)
+            .publish_flashcard("card-1", AuditActorKind::Teacher, Some("teacher-01"))
             .expect_err("a card cannot publish without a review");
-        assert!(error.to_string().contains("latest review"));
+        assert!(error.to_string().contains("current asset"));
 
         repository.save_visual_brief(&brief("card-1")).unwrap();
         repository
@@ -182,7 +182,7 @@ mod tests {
             })
             .unwrap();
         assert!(repository
-            .transition_status("card-1", FlashcardStatus::Published)
+            .publish_flashcard("card-1", AuditActorKind::Teacher, Some("teacher-01"))
             .expect_err("a failed latest review must block publication")
             .to_string()
             .contains("latest review"));
@@ -199,12 +199,154 @@ mod tests {
             })
             .unwrap();
 
-        repository.transition_status("card-1", FlashcardStatus::Published).unwrap();
+        repository
+            .record_asset(&FlashcardAsset {
+                id: "asset-2".into(),
+                card_id: "card-1".into(),
+                brief_id: "brief-1".into(),
+                repo_path: "docs/assets/asset-2.png".into(),
+                provider_job_id: None,
+                version: 2,
+                status: FlashcardAssetStatus::Approved,
+            })
+            .unwrap();
+        assert!(repository
+            .publish_flashcard("card-1", AuditActorKind::Teacher, Some("teacher-01"))
+            .expect_err("a review for an older asset must not unlock publication")
+            .to_string()
+            .contains("current asset"));
+        repository
+            .record_review(&FlashcardReview {
+                id: "review-4".into(),
+                card_id: "card-1".into(),
+                asset_id: "asset-2".into(),
+                passed: true,
+                findings_json: json!([]),
+                reviewer_kind: ReviewerKind::Teacher,
+                reviewer_id: Some("teacher-01".into()),
+            })
+            .unwrap();
+
+        assert!(repository
+            .transition_status("card-1", FlashcardStatus::Published)
+            .expect_err("direct publication must be rejected")
+            .to_string()
+            .contains("publish_flashcard"));
+        assert!(repository
+            .publish_flashcard("card-1", AuditActorKind::Chatgpt, Some("chatgpt-1"))
+            .expect_err("AI actors must not publish")
+            .to_string()
+            .contains("teacher"));
+
+        repository
+            .publish_flashcard("card-1", AuditActorKind::Teacher, Some("teacher-01"))
+            .unwrap();
         assert_eq!(
             repository.get_flashcard("card-1").unwrap().unwrap().status,
             FlashcardStatus::Published
         );
-        assert_eq!(repository.audit_event_count("card-1").unwrap(), 10);
+        assert_eq!(repository.audit_event_count("card-1").unwrap(), 12);
+        assert_eq!(
+            audit_actor_for_action(&repository, "card-1", "flashcard.published"),
+            Some(("teacher".into(), Some("teacher-01".into()))),
+        );
+    }
+
+    #[test]
+    fn rejects_visual_briefs_that_do_not_match_the_card_source_exercise() {
+        let repository = repository();
+        repository.create_flashcard(&card("card-1")).unwrap();
+        let missing_card_brief = brief("missing-card");
+        assert!(repository
+            .save_visual_brief(&missing_card_brief)
+            .expect_err("brief card must exist")
+            .to_string()
+            .contains("flashcard not found"));
+        let mut mismatched = brief("card-1");
+        mismatched.exercise_id = "source_chair_arm_work_with_split_pedal_row_5".into();
+
+        assert!(repository
+            .save_visual_brief(&mismatched)
+            .expect_err("brief exercise must match the source exercise")
+            .to_string()
+            .contains("source exercise"));
+        assert_eq!(repository.audit_event_count("card-1").unwrap(), 1);
+    }
+
+    #[test]
+    fn rejects_reviews_and_assets_that_break_card_ownership() {
+        let repository = repository();
+        repository.create_flashcard(&card("card-1")).unwrap();
+        repository.create_flashcard(&card("card-2")).unwrap();
+        repository.save_visual_brief(&brief("card-1")).unwrap();
+        let mut card_two_brief = brief("card-2");
+        card_two_brief.id = "brief-2".into();
+        repository.save_visual_brief(&card_two_brief).unwrap();
+
+        assert!(repository
+            .record_asset(&FlashcardAsset {
+                id: "bad-asset".into(),
+                card_id: "card-1".into(),
+                brief_id: "brief-2".into(),
+                repo_path: "docs/assets/bad.png".into(),
+                provider_job_id: None,
+                version: 1,
+                status: FlashcardAssetStatus::NeedsReview,
+            })
+            .expect_err("asset brief must belong to the same card")
+            .to_string()
+            .contains("brief"));
+        assert_eq!(repository.asset_version("bad-asset").unwrap(), None);
+        assert_eq!(
+            repository
+                .get_flashcard("card-1")
+                .unwrap()
+                .unwrap()
+                .current_asset_id,
+            None
+        );
+
+        repository
+            .record_asset(&FlashcardAsset {
+                id: "asset-2".into(),
+                card_id: "card-2".into(),
+                brief_id: "brief-2".into(),
+                repo_path: "docs/assets/asset-2.png".into(),
+                provider_job_id: None,
+                version: 1,
+                status: FlashcardAssetStatus::Approved,
+            })
+            .unwrap();
+        assert!(repository
+            .record_review(&FlashcardReview {
+                id: "cross-card-review".into(),
+                card_id: "card-1".into(),
+                asset_id: "asset-2".into(),
+                passed: true,
+                findings_json: json!([]),
+                reviewer_kind: ReviewerKind::Teacher,
+                reviewer_id: Some("teacher-01".into()),
+            })
+            .expect_err("reviews cannot use another card's asset")
+            .to_string()
+            .contains("does not belong"));
+    }
+
+    fn audit_actor_for_action(
+        repository: &FlashcardRepository,
+        card_id: &str,
+        action: &str,
+    ) -> Option<(String, Option<String>)> {
+        repository.runtime.block_on(async {
+            sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT actor_kind, actor_id FROM flashcard_audit_events WHERE card_id = ? AND action = ? ORDER BY id DESC LIMIT 1",
+            )
+            .bind(card_id)
+            .bind(action)
+            .fetch_optional(&repository.pool)
+            .await
+            .expect("audit lookup should succeed")
+        })
     }
 }
 use std::sync::Arc;
@@ -217,7 +359,7 @@ use mps_flashcards::{
 };
 use serde_json::{json, Value};
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 use tokio::runtime::Runtime;
 
 #[derive(Debug, Clone, Default)]
@@ -357,13 +499,16 @@ impl FlashcardRepository {
         let card = card.clone();
         let timestamp = timestamp();
         self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
             sqlx::query("INSERT INTO flashcard_cards (id, source_exercise_id, category, teaching_copy_json, style_profile, character_id, current_asset_id, version, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&card.id).bind(&card.source_exercise_id).bind(&card.category)
                 .bind(serde_json::to_string(&card.teaching_copy_json)?)
                 .bind(&card.style_profile).bind(&card.character_id).bind(&card.current_asset_id)
                 .bind(card.version).bind(status_to_db(card.status)).bind(&timestamp).bind(&timestamp)
-                .execute(&self.pool).await?;
-            self.record_system_audit_async(&card.id, "flashcard.created", json!({"version": card.version})).await
+                .execute(&mut *transaction).await?;
+            record_audit_in_transaction(&mut transaction, &card.id, AuditActorKind::System, None, "flashcard.created", json!({"version": card.version})).await?;
+            transaction.commit().await?;
+            Ok(())
         })?;
         Ok(card)
     }
@@ -391,60 +536,143 @@ impl FlashcardRepository {
 
     pub fn save_visual_brief(&self, brief: &VisualBrief) -> Result<()> {
         validate_visual_brief(brief).map_err(|error| anyhow!(error))?;
+        if self.catalog.find(&brief.exercise_id).is_none() {
+            return Err(anyhow!("visual brief exercise is not in the canonical catalog"));
+        }
         let brief = brief.clone();
         self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
+            let card: Option<(String,)> = sqlx::query_as("SELECT source_exercise_id FROM flashcard_cards WHERE id = ?")
+                .bind(&brief.card_id).fetch_optional(&mut *transaction).await?;
+            let source_exercise_id = card.ok_or_else(|| anyhow!("flashcard not found: {}", brief.card_id))?.0;
+            if brief.exercise_id != source_exercise_id {
+                return Err(anyhow!("visual brief exercise must match the card source exercise"));
+            }
             sqlx::query("INSERT INTO visual_briefs (id, card_id, exercise_id, brief_json, version, created_at) VALUES (?, ?, ?, ?, ?, ?)")
                 .bind(&brief.id).bind(&brief.card_id).bind(&brief.exercise_id)
                 .bind(serde_json::to_string(&brief)?).bind(brief.version).bind(timestamp())
-                .execute(&self.pool).await?;
-            self.record_system_audit_async(&brief.card_id, "visual_brief.saved", json!({"brief_id": brief.id, "version": brief.version})).await
+                .execute(&mut *transaction).await?;
+            record_audit_in_transaction(&mut transaction, &brief.card_id, AuditActorKind::System, None, "visual_brief.saved", json!({"brief_id": brief.id, "version": brief.version})).await?;
+            transaction.commit().await?;
+            Ok(())
         })
     }
 
     pub fn create_job(&self, job: &FlashcardJob) -> Result<()> {
         self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
             let now = timestamp();
             sqlx::query("INSERT INTO flashcard_jobs (id, card_id, kind, status, input_json, output_json, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&job.id).bind(&job.card_id).bind(job_kind_to_db(&job.kind)).bind(job_status_to_db(&job.status))
                 .bind(serde_json::to_string(&job.input_json)?).bind(job.output_json.as_ref().map(serde_json::to_string).transpose()?)
-                .bind(&job.error).bind(&now).bind(&now).execute(&self.pool).await?;
-            self.record_system_audit_async(&job.card_id, "flashcard_job.created", json!({"job_id": job.id})).await
+                .bind(&job.error).bind(&now).bind(&now).execute(&mut *transaction).await?;
+            record_audit_in_transaction(&mut transaction, &job.card_id, AuditActorKind::System, None, "flashcard_job.created", json!({"job_id": job.id})).await?;
+            transaction.commit().await?;
+            Ok(())
         })
     }
 
     pub fn record_asset(&self, asset: &FlashcardAsset) -> Result<()> {
         self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
+            let brief_card_id: Option<(String,)> = sqlx::query_as("SELECT card_id FROM visual_briefs WHERE id = ?")
+                .bind(&asset.brief_id).fetch_optional(&mut *transaction).await?;
+            if brief_card_id.ok_or_else(|| anyhow!("visual brief not found: {}", asset.brief_id))?.0 != asset.card_id {
+                return Err(anyhow!("asset brief does not belong to the asset card"));
+            }
             sqlx::query("INSERT INTO flashcard_assets (id, card_id, brief_id, repo_path, provider_job_id, version, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&asset.id).bind(&asset.card_id).bind(&asset.brief_id).bind(&asset.repo_path)
                 .bind(&asset.provider_job_id).bind(asset.version).bind(asset_status_to_db(&asset.status)).bind(timestamp())
-                .execute(&self.pool).await?;
+                .execute(&mut *transaction).await?;
             sqlx::query("UPDATE flashcard_cards SET current_asset_id = ?, updated_at = ? WHERE id = ?")
-                .bind(&asset.id).bind(timestamp()).bind(&asset.card_id).execute(&self.pool).await?;
-            self.record_system_audit_async(&asset.card_id, "flashcard_asset.recorded", json!({"asset_id": asset.id, "version": asset.version})).await
+                .bind(&asset.id).bind(timestamp()).bind(&asset.card_id).execute(&mut *transaction).await?;
+            record_audit_in_transaction(&mut transaction, &asset.card_id, AuditActorKind::System, None, "flashcard_asset.recorded", json!({"asset_id": asset.id, "version": asset.version})).await?;
+            transaction.commit().await?;
+            Ok(())
         })
     }
 
     pub fn record_review(&self, review: &FlashcardReview) -> Result<()> {
         self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
+            let asset: Option<(String, String)> = sqlx::query_as("SELECT card_id, brief_id FROM flashcard_assets WHERE id = ?")
+                .bind(&review.asset_id).fetch_optional(&mut *transaction).await?;
+            let (asset_card_id, brief_id) = asset.ok_or_else(|| anyhow!("flashcard asset not found: {}", review.asset_id))?;
+            let brief_card_id: Option<(String,)> = sqlx::query_as("SELECT card_id FROM visual_briefs WHERE id = ?")
+                .bind(&brief_id).fetch_optional(&mut *transaction).await?;
+            let brief_card_id = brief_card_id.ok_or_else(|| anyhow!("visual brief not found: {brief_id}"))?.0;
+            if review.card_id != asset_card_id || asset_card_id != brief_card_id {
+                return Err(anyhow!("review asset does not belong to the review card"));
+            }
             sqlx::query("INSERT INTO flashcard_reviews (id, card_id, asset_id, passed, findings_json, reviewer_kind, reviewer_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&review.id).bind(&review.card_id).bind(&review.asset_id).bind(review.passed)
                 .bind(serde_json::to_string(&review.findings_json)?).bind(reviewer_kind_to_db(&review.reviewer_kind))
-                .bind(&review.reviewer_id).bind(timestamp()).execute(&self.pool).await?;
-            self.record_system_audit_async(&review.card_id, "flashcard_review.recorded", json!({"review_id": review.id, "passed": review.passed})).await
+                .bind(&review.reviewer_id).bind(timestamp()).execute(&mut *transaction).await?;
+            record_audit_in_transaction(&mut transaction, &review.card_id, AuditActorKind::System, None, "flashcard_review.recorded", json!({"review_id": review.id, "passed": review.passed})).await?;
+            transaction.commit().await?;
+            Ok(())
         })
     }
 
     pub fn transition_status(&self, card_id: &str, next: FlashcardStatus) -> Result<()> {
-        let card = self.get_flashcard(card_id)?.ok_or_else(|| anyhow!("flashcard not found: {card_id}"))?;
-        if !can_transition(card.status, next) { return Err(anyhow!("invalid flashcard status transition")); }
-        if next == FlashcardStatus::Published && !self.latest_review_passed(card_id)? {
-            return Err(anyhow!("cannot publish: latest review has not passed"));
+        if next == FlashcardStatus::Published {
+            return Err(anyhow!("use publish_flashcard for teacher-authorized publication"));
         }
         let card_id = card_id.to_owned();
         self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
+            let card = get_flashcard_in_transaction(&mut transaction, &card_id)
+                .await?
+                .ok_or_else(|| anyhow!("flashcard not found: {card_id}"))?;
+            if !can_transition(card.status, next) {
+                return Err(anyhow!("invalid flashcard status transition"));
+            }
             sqlx::query("UPDATE flashcard_cards SET status = ?, updated_at = ? WHERE id = ?")
-                .bind(status_to_db(next)).bind(timestamp()).bind(&card_id).execute(&self.pool).await?;
-            self.record_system_audit_async(&card_id, "flashcard.status_transitioned", json!({"from": status_to_db(card.status), "to": status_to_db(next)})).await
+                .bind(status_to_db(next)).bind(timestamp()).bind(&card_id).execute(&mut *transaction).await?;
+            record_audit_in_transaction(&mut transaction, &card_id, AuditActorKind::System, None, "flashcard.status_transitioned", json!({"from": status_to_db(card.status), "to": status_to_db(next)})).await?;
+            transaction.commit().await?;
+            Ok(())
+        })
+    }
+
+    pub fn publish_flashcard(
+        &self,
+        card_id: &str,
+        actor_kind: AuditActorKind,
+        actor_id: Option<&str>,
+    ) -> Result<()> {
+        if actor_kind != AuditActorKind::Teacher
+            || !matches!(actor_id, Some(id) if !id.trim().is_empty())
+        {
+            return Err(anyhow!("only an identified teacher may publish a flashcard"));
+        }
+        let card_id = card_id.to_owned();
+        let actor_id = actor_id.map(str::to_owned);
+        self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
+            let card = get_flashcard_in_transaction(&mut transaction, &card_id)
+                .await?
+                .ok_or_else(|| anyhow!("flashcard not found: {card_id}"))?;
+            if !can_transition(card.status, FlashcardStatus::Published) {
+                return Err(anyhow!("invalid flashcard status transition"));
+            }
+            let current_asset_id = card.current_asset_id.ok_or_else(|| anyhow!("cannot publish without a current asset"))?;
+            let review_passed: Option<i64> = sqlx::query_scalar(
+                "SELECT reviews.passed FROM flashcard_reviews AS reviews JOIN flashcard_assets AS assets ON assets.id = reviews.asset_id WHERE reviews.card_id = ? AND assets.card_id = ? AND assets.id = ? ORDER BY reviews.created_at DESC, reviews.id DESC LIMIT 1",
+            )
+            .bind(&card_id)
+            .bind(&card_id)
+            .bind(&current_asset_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+            if review_passed != Some(1) {
+                return Err(anyhow!("cannot publish: current asset's latest review has not passed"));
+            }
+            sqlx::query("UPDATE flashcard_cards SET status = ?, updated_at = ? WHERE id = ?")
+                .bind(status_to_db(FlashcardStatus::Published)).bind(timestamp()).bind(&card_id).execute(&mut *transaction).await?;
+            record_audit_in_transaction(&mut transaction, &card_id, actor_kind, actor_id.as_deref(), "flashcard.published", json!({"from": status_to_db(card.status), "to": status_to_db(FlashcardStatus::Published), "asset_id": current_asset_id})).await?;
+            transaction.commit().await?;
+            Ok(())
         })
     }
 
@@ -453,7 +681,12 @@ impl FlashcardRepository {
         let actor_id = actor_id.map(str::to_owned);
         let action = action.to_owned();
         let payload = payload.clone();
-        self.runtime.block_on(async { self.record_audit_async(&card_id, actor_kind, actor_id.as_deref(), &action, payload).await })
+        self.runtime.block_on(async {
+            let mut transaction = self.pool.begin().await?;
+            record_audit_in_transaction(&mut transaction, &card_id, actor_kind, actor_id.as_deref(), &action, payload).await?;
+            transaction.commit().await?;
+            Ok(())
+        })
     }
 
     pub fn latest_brief_version(&self, card_id: &str) -> Result<Option<i64>> { self.scalar_i64("SELECT MAX(version) FROM visual_briefs WHERE card_id = ?", card_id) }
@@ -468,18 +701,38 @@ impl FlashcardRepository {
         self.runtime.block_on(async { Ok(sqlx::query_scalar(statement).bind(value).fetch_one(&self.pool).await?) })
     }
 
-    fn latest_review_passed(&self, card_id: &str) -> Result<bool> {
-        let card_id = card_id.to_owned();
-        self.runtime.block_on(async { Ok(sqlx::query_scalar::<_, i64>("SELECT passed FROM flashcard_reviews WHERE card_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").bind(card_id).fetch_optional(&self.pool).await?.unwrap_or(0) == 1) })
-    }
+}
 
-    async fn record_system_audit_async(&self, card_id: &str, action: &str, payload: Value) -> Result<()> { self.record_audit_async(card_id, AuditActorKind::System, None, action, payload).await }
-    async fn record_audit_async(&self, card_id: &str, actor_kind: AuditActorKind, actor_id: Option<&str>, action: &str, payload: Value) -> Result<()> {
-        sqlx::query("INSERT INTO flashcard_audit_events (card_id, actor_kind, actor_id, action, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(card_id).bind(actor_kind_to_db(&actor_kind)).bind(actor_id).bind(action)
-            .bind(serde_json::to_string(&payload)?).bind(timestamp()).execute(&self.pool).await?;
-        Ok(())
-    }
+async fn get_flashcard_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    id: &str,
+) -> Result<Option<FlashcardCard>> {
+    sqlx::query_as::<_, CardRow>("SELECT id, source_exercise_id, category, teaching_copy_json, style_profile, character_id, current_asset_id, version, status FROM flashcard_cards WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&mut **transaction)
+        .await?
+        .map(card_from_row)
+        .transpose()
+}
+
+async fn record_audit_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    card_id: &str,
+    actor_kind: AuditActorKind,
+    actor_id: Option<&str>,
+    action: &str,
+    payload: Value,
+) -> Result<()> {
+    sqlx::query("INSERT INTO flashcard_audit_events (card_id, actor_kind, actor_id, action, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(card_id)
+        .bind(actor_kind_to_db(&actor_kind))
+        .bind(actor_id)
+        .bind(action)
+        .bind(serde_json::to_string(&payload)?)
+        .bind(timestamp())
+        .execute(&mut **transaction)
+        .await?;
+    Ok(())
 }
 
 fn timestamp() -> String { SystemTime::now().duration_since(UNIX_EPOCH).expect("clock after epoch").as_millis().to_string() }
