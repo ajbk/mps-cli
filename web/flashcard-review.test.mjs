@@ -181,3 +181,50 @@ test('a rejected or stale teacher review cannot publish', async () => {
         teacher_review: { reviewer: 'Teacher', status: 'approved', version: 0 }
     }, canonicalSource), false);
 });
+
+test('an explicit teacher edit invalidates an approved card until it is regenerated and reviewed', async () => {
+    const review = await loadReview();
+    const approved = card({
+        status: 'approved',
+        automated_review: { status: 'passed', version: 1 },
+        teacher_review: { reviewer: 'Teacher', status: 'approved', version: 1 },
+        current_asset_id: 'asset-v1',
+        image: 'assets/flashcard-images/mat/m02.png'
+    });
+
+    const edited = review.invalidateTeacherEdits({ ...approved, cue: 'Teacher edit' });
+
+    assert.equal(edited.status, 'draft');
+    assert.equal(edited.version, 2);
+    assert.equal(edited.automated_review, null);
+    assert.equal(edited.teacher_review, null);
+    assert.equal(edited.current_asset_id, null);
+    assert.equal(edited.image, null);
+    assert.equal(review.canPublish(edited, canonicalSource), false);
+});
+
+test('a card must match the trusted selected draft ID before canonical resolution', async () => {
+    const review = await loadReview();
+
+    assert.equal(review.matchesTrustedDraft(card({ id: 'draft:M02' }), 'draft:M02'), true);
+    assert.equal(review.matchesTrustedDraft(card({ id: 'draft:M03' }), 'draft:M02'), false);
+});
+
+test('a legacy draft hydrates only missing locked source fields from its canonical source', async () => {
+    const review = await loadReview();
+    const legacy = card({
+        apparatus: undefined,
+        source_snapshot: {
+            exercise_id: 'M02',
+            style_profile: 'mono-gesture-ink-pilates-v1'
+        },
+        teacher_review: { reviewer: 'Teacher', status: 'approved', version: 1 }
+    });
+
+    const hydrated = review.hydrateLegacySource(legacy, canonicalSource);
+
+    assert.equal(hydrated.apparatus, 'Mat');
+    assert.equal(hydrated.source_snapshot.objective, 'Pelvic awareness');
+    assert.equal(hydrated.teacher_review.reviewer, 'Teacher');
+    assert.equal(review.hydrateLegacySource(card({ name: 'Mismatched name' }), canonicalSource), null);
+});

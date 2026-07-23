@@ -893,8 +893,15 @@ async function createFlashcardDraft(cardId) {
 
     const store = window.MPS_FLASHCARD_STORE({ staticCards: flashcards() });
     const draftId = window.MPS_FLASHCARD_MODEL.draftKey(cardId);
-    const existingDraft = await store.getCard(draftId);
+    let existingDraft = await store.getCard(draftId);
     if (existingDraft) {
+        const hydrated = window.MPS_FLASHCARD_REVIEW.hydrateLegacySource(
+            existingDraft,
+            canonicalSourceFromCatalogCard(sourceCard)
+        );
+        if (hydrated) {
+            existingDraft = await store.saveDraft(hydrated);
+        }
         state.selectedFlashcardId = existingDraft.id;
         safeSelectedFlashcardWrite(existingDraft.id);
         await renderFlashcards();
@@ -904,15 +911,7 @@ async function createFlashcardDraft(cardId) {
 
     const draft = window.MPS_FLASHCARD_MODEL.createLocalDraft(sourceCard);
     draft.apparatus = sourceCard.category;
-    draft.source_snapshot = {
-        exercise_id: draft.source_exercise_id,
-        style_profile: draft.style_profile,
-        name: sourceCard.name,
-        category: sourceCard.category,
-        apparatus: sourceCard.category,
-        level: sourceCard.level,
-        objective: sourceCard.objective || ''
-    };
+    draft.source_snapshot = canonicalSourceFromCatalogCard(sourceCard);
     draft.automated_review = { status: 'pending', version: draft.version };
     await store.saveDraft(draft);
     state.selectedFlashcardId = draft.id;
@@ -926,11 +925,7 @@ async function selectedFlashcardDraft() {
     return window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).getCard(state.selectedFlashcardId);
 }
 
-function canonicalSourceForCard(card) {
-    const draftPrefix = 'draft:';
-    const cardId = String(card?.id || '');
-    if (!cardId.startsWith(draftPrefix)) return null;
-    const source = flashcards().find((item) => item.id === cardId.slice(draftPrefix.length));
+function canonicalSourceFromCatalogCard(source) {
     if (!source) return null;
     return {
         exercise_id: source.id,
@@ -941,6 +936,16 @@ function canonicalSourceForCard(card) {
         level: source.level,
         objective: source.objective || ''
     };
+}
+
+function canonicalSourceForCard(card) {
+    const draftPrefix = 'draft:';
+    const trustedDraftId = state.selectedFlashcardId;
+    if (!window.MPS_FLASHCARD_REVIEW.matchesTrustedDraft(card, trustedDraftId)) return null;
+    if (!String(trustedDraftId || '').startsWith(draftPrefix)) return null;
+    return canonicalSourceFromCatalogCard(
+        flashcards().find((item) => item.id === trustedDraftId.slice(draftPrefix.length))
+    );
 }
 
 function editorTextArea(name, label, card) {
@@ -1020,7 +1025,7 @@ async function renderFlashcardEditor() {
 async function saveFlashcardEditor(form) {
     const card = await selectedFlashcardDraft();
     if (!card) return;
-    const updated = {
+    const accepted = {
         ...card,
         front: form.elements.front.value,
         cue: form.elements.cue.value,
@@ -1028,6 +1033,7 @@ async function saveFlashcardEditor(form) {
         progress: form.elements.progress.value,
         proposed_changes: null
     };
+    const updated = window.MPS_FLASHCARD_REVIEW.invalidateTeacherEdits(accepted);
     await window.MPS_FLASHCARD_STORE({ staticCards: flashcards() }).saveDraft(updated);
     await renderFlashcardEditor();
     showToast('Teacher changes saved');

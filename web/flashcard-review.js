@@ -5,6 +5,15 @@
         outfit: 'off-white thin-strap cropped Pilates camisole and dark charcoal high-waisted mid-thigh biker shorts',
         cheek_accent: '#D98F9A'
     };
+    const lockedSourceFields = [
+        ['exercise_id', 'source_exercise_id'],
+        ['style_profile', 'style_profile'],
+        ['name', 'name'],
+        ['category', 'category'],
+        ['apparatus', 'apparatus'],
+        ['level', 'level'],
+        ['objective', 'objective']
+    ];
 
     function automatedReviewPassed(card) {
         return card?.automated_review?.status === 'passed'
@@ -13,20 +22,50 @@
 
     function sourceIsUnchanged(card, canonicalSource) {
         const snapshot = card?.source_snapshot;
-        const lockedFields = [
-            ['exercise_id', 'source_exercise_id'],
-            ['style_profile', 'style_profile'],
-            ['name', 'name'],
-            ['category', 'category'],
-            ['apparatus', 'apparatus'],
-            ['level', 'level'],
-            ['objective', 'objective']
-        ];
         return Boolean(snapshot && canonicalSource)
-            && lockedFields.every(([sourceField, cardField]) =>
+            && lockedSourceFields.every(([sourceField, cardField]) =>
                 snapshot[sourceField] === canonicalSource[sourceField]
                 && card?.[cardField] === canonicalSource[sourceField]
             );
+    }
+
+    function matchesTrustedDraft(card, trustedDraftId) {
+        return Boolean(trustedDraftId) && card?.id === trustedDraftId;
+    }
+
+    function hydrateLegacySource(card, canonicalSource) {
+        if (!card || !canonicalSource) return null;
+        const snapshot = card.source_snapshot || {};
+        const canHydrate = lockedSourceFields.every(([sourceField, cardField]) => {
+            const cardValue = card[cardField];
+            const snapshotValue = snapshot[sourceField];
+            const allowsMissingApparatus = sourceField === 'apparatus' && cardValue === undefined;
+            return (allowsMissingApparatus || cardValue === canonicalSource[sourceField])
+                && (snapshotValue === undefined || snapshotValue === canonicalSource[sourceField]);
+        });
+        const needsHydration = card.apparatus === undefined
+            || lockedSourceFields.some(([sourceField]) => snapshot[sourceField] === undefined);
+        if (!canHydrate || !needsHydration) return null;
+        return {
+            ...card,
+            apparatus: card.apparatus === undefined ? canonicalSource.apparatus : card.apparatus,
+            source_snapshot: { ...canonicalSource }
+        };
+    }
+
+    function invalidateTeacherEdits(card) {
+        const version = (Number(card?.version) || 0) + 1;
+        return {
+            ...card,
+            status: 'draft',
+            version,
+            image: null,
+            current_asset_id: null,
+            asset_version: null,
+            automated_review: null,
+            teacher_review: null,
+            proposed_changes: null
+        };
     }
 
     function visualContractMatches(card) {
@@ -105,6 +144,9 @@
         visualContract,
         automatedReviewPassed,
         sourceIsUnchanged,
+        matchesTrustedDraft,
+        hydrateLegacySource,
+        invalidateTeacherEdits,
         visualContractMatches,
         canPublish,
         transition
